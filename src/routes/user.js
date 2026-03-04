@@ -18,10 +18,6 @@ router.post('/keys', auth, (req, res) => {
     const { apiKey, apiSecret, exchange = 'bybit', label = '', permissions = 'spot' } = req.body;
     if (!apiKey || !apiSecret) return res.status(400).json({ error: 'API Key y Secret requeridos' });
 
-    if (exchange === 'binance' && !process.env.BINANCE_PROXY) {
-      return res.status(400).json({ error: 'Binance requiere configuración de proxy en el servidor. Contactá al administrador o usá Bybit/KuCoin.' });
-    }
-
     const db = getDB();
     const enc_key = encrypt(apiKey);
     const enc_secret = encrypt(apiSecret);
@@ -48,7 +44,10 @@ router.post('/keys/:id/test', auth, async (req, res) => {
   } catch (err) {
     const msg = err.message || '';
     if (msg.includes('restricted location') || msg.includes('Service unavailable')) {
-      return res.status(400).json({ error: 'Binance bloquea conexiones desde este servidor. Usá Bybit o KuCoin en su lugar (no tienen restricciones geográficas).' });
+      return res.status(400).json({ error: 'Binance rechazó la conexión. Asegurate de agregar la IP del servidor (172.96.8.245) en la whitelist de tu API Key en Binance.' });
+    }
+    if (msg.includes('Invalid API') || msg.includes('apiKey')) {
+      return res.status(400).json({ error: 'API Key o Secret inválidos. Verificá que los copiaste bien.' });
     }
     res.status(400).json({ error: 'Conexión fallida: ' + msg });
   }

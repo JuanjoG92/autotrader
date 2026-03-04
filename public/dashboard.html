@@ -213,12 +213,13 @@
         <div>
           <strong>¿Cómo conectar tu exchange?</strong>
           <ol>
-            <li>Ingresá a la sección de API de tu exchange (<a href="https://www.bybit.com/app/user/api-management" target="_blank">Bybit</a>, <a href="https://www.binance.com/en/my/settings/api-management" target="_blank">Binance</a>, <a href="https://www.kucoin.com/account/api" target="_blank">KuCoin</a>)</li>
-            <li>Creá una nueva API Key con la etiqueta "AutoTrader"</li>
-            <li><strong>IMPORTANTE:</strong> Habilitá solo "Spot Trading". NO habilitar retiro.</li>
+            <li>Ingresá a la sección de API de tu exchange (<a href="https://www.bybit.com/app/user/api-management" target="_blank">Bybit</a>, <a href="https://www.binance.com/es/my/settings/api-management" target="_blank">Binance</a>, <a href="https://www.kucoin.com/account/api" target="_blank">KuCoin</a>)</li>
+            <li>Creá una nueva API Key (tipo <strong>"Generada por el sistema"</strong>)</li>
+            <li>Habilitá <strong>"Habilitar lectura"</strong> + <strong>"Habilitar trading de márgenes y spot"</strong></li>
+            <li>En <strong>"Restricciones de IP"</strong> agregá: <code>172.96.8.245</code></li>
             <li>Copiá la API Key y el Secret y pegalos acá abajo</li>
           </ol>
-          <small>💡 <strong>Recomendado:</strong> Bybit funciona sin restricciones geográficas.</small>
+          <small>🔒 <strong>Seguridad:</strong> La restricción por IP asegura que solo nuestro servidor pueda usar tu API Key.</small>
         </div>
       </div>
 
