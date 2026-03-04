@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dashboard - AutoTrader</title>
+  <link rel="stylesheet" href="/css/app.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+</head>
+<body class="dashboard-page">
+
+  <!-- Sidebar -->
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-header">
+      <a href="/" class="sidebar-logo"><i class="fas fa-chart-line"></i> <span>AutoTrader</span></a>
+    </div>
+    <nav class="sidebar-nav">
+      <a href="#" class="sidebar-link active" data-section="overview"><i class="fas fa-home"></i> <span>Resumen</span></a>
+      <a href="#" class="sidebar-link" data-section="bots"><i class="fas fa-robot"></i> <span>Mis Bots</span></a>
+      <a href="#" class="sidebar-link" data-section="market"><i class="fas fa-chart-bar"></i> <span>Mercado</span></a>
+      <a href="#" class="sidebar-link" data-section="trades"><i class="fas fa-exchange-alt"></i> <span>Operaciones</span></a>
+      <a href="#" class="sidebar-link" data-section="keys"><i class="fas fa-key"></i> <span>API Keys</span></a>
+    </nav>
+    <div class="sidebar-footer">
+      <div class="user-info">
+        <i class="fas fa-user-circle"></i>
+        <span id="userName">Usuario</span>
+      </div>
+      <button class="btn-icon" onclick="logout()" title="Cerrar sesión"><i class="fas fa-sign-out-alt"></i></button>
+    </div>
+  </aside>
+
+  <!-- Mobile topbar -->
+  <header class="topbar">
+    <button class="btn-icon" onclick="document.getElementById('sidebar').classList.toggle('open')">
+      <i class="fas fa-bars"></i>
+    </button>
+    <span class="topbar-title">AutoTrader</span>
+    <button class="btn-icon" onclick="logout()"><i class="fas fa-sign-out-alt"></i></button>
+  </header>
+
+  <!-- Main Content -->
+  <main class="main-content">
+
+    <!-- Overview Section -->
+    <section class="section active" id="sec-overview">
+      <h1 class="page-title">Resumen</h1>
+
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div class="stat-icon green"><i class="fas fa-robot"></i></div>
+          <div><div class="stat-value" id="activeBots">0</div><div class="stat-label">Bots activos</div></div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon blue"><i class="fas fa-exchange-alt"></i></div>
+          <div><div class="stat-value" id="totalTrades">0</div><div class="stat-label">Operaciones</div></div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon amber"><i class="fas fa-coins"></i></div>
+          <div><div class="stat-value" id="totalVolume">$0</div><div class="stat-label">Volumen operado</div></div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon" id="pnlIcon"><i class="fas fa-dollar-sign"></i></div>
+          <div><div class="stat-value" id="totalPnl">$0</div><div class="stat-label">PnL total</div></div>
+        </div>
+      </div>
+
+      <!-- Live prices -->
+      <div class="card">
+        <div class="card-header"><h3><i class="fas fa-bolt"></i> Precios en vivo</h3></div>
+        <div class="prices-grid" id="pricesGrid">
+          <div class="price-card" id="lp-BTC"><span class="pc-symbol">BTC/USDT</span><span class="pc-price">---</span><span class="pc-change">---</span></div>
+          <div class="price-card" id="lp-ETH"><span class="pc-symbol">ETH/USDT</span><span class="pc-price">---</span><span class="pc-change">---</span></div>
+          <div class="price-card" id="lp-BNB"><span class="pc-symbol">BNB/USDT</span><span class="pc-price">---</span><span class="pc-change">---</span></div>
+          <div class="price-card" id="lp-SOL"><span class="pc-symbol">SOL/USDT</span><span class="pc-price">---</span><span class="pc-change">---</span></div>
+          <div class="price-card" id="lp-XRP"><span class="pc-symbol">XRP/USDT</span><span class="pc-price">---</span><span class="pc-change">---</span></div>
+        </div>
+      </div>
+
+      <!-- Recent trades -->
+      <div class="card">
+        <div class="card-header"><h3><i class="fas fa-history"></i> Últimas operaciones</h3></div>
+        <div class="table-wrap">
+          <table class="table">
+            <thead><tr><th>Fecha</th><th>Par</th><th>Lado</th><th>Monto</th><th>Precio</th><th>Total</th></tr></thead>
+            <tbody id="recentTrades"><tr><td colspan="6" class="empty">Sin operaciones aún</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- Bots Section -->
+    <section class="section" id="sec-bots">
+      <div class="page-header">
+        <h1 class="page-title">Mis Bots</h1>
+        <button class="btn btn-primary" onclick="showCreateBot()"><i class="fas fa-plus"></i> Nuevo Bot</button>
+      </div>
+
+      <div id="botsList" class="bots-grid"></div>
+
+      <!-- Create Bot Modal -->
+      <div class="modal" id="botModal">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h3>Crear Bot</h3>
+            <button class="btn-icon" onclick="closeModal('botModal')"><i class="fas fa-times"></i></button>
+          </div>
+          <form id="createBotForm">
+            <div class="form-group">
+              <label>Nombre del bot</label>
+              <input type="text" id="botName" placeholder="Ej: BTC Scalper" required>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label>Par</label>
+                <select id="botPair">
+                  <option value="BTC/USDT">BTC/USDT</option>
+                  <option value="ETH/USDT">ETH/USDT</option>
+                  <option value="BNB/USDT">BNB/USDT</option>
+                  <option value="SOL/USDT">SOL/USDT</option>
+                  <option value="XRP/USDT">XRP/USDT</option>
+                  <option value="ADA/USDT">ADA/USDT</option>
+                  <option value="DOGE/USDT">DOGE/USDT</option>
+                  <option value="MATIC/USDT">MATIC/USDT</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label>API Key</label>
+                <select id="botApiKey"></select>
+              </div>
+            </div>
+            <div class="form-group">
+              <label>Estrategia</label>
+              <select id="botStrategy" onchange="updateStrategyParams()">
+                <option value="sma_crossover">SMA Crossover</option>
+                <option value="rsi">RSI</option>
+                <option value="macd">MACD</option>
+              </select>
+              <small id="strategyDesc" class="form-hint">Cruza media móvil corta vs larga</small>
+            </div>
+            <div id="strategyParams"></div>
+            <div class="form-row">
+              <div class="form-group">
+                <label>Monto por operación (USDT)</label>
+                <input type="number" id="botAmount" value="10" min="1" step="1">
+              </div>
+              <div class="form-group">
+                <label>Intervalo</label>
+                <select id="botInterval">
+                  <option value="*/1 * * * *">Cada 1 min</option>
+                  <option value="*/5 * * * *" selected>Cada 5 min</option>
+                  <option value="*/15 * * * *">Cada 15 min</option>
+                  <option value="*/30 * * * *">Cada 30 min</option>
+                  <option value="0 * * * *">Cada 1 hora</option>
+                </select>
+              </div>
+            </div>
+            <div class="form-group">
+              <label>Timeframe de velas</label>
+              <select id="botTimeframe">
+                <option value="1m">1 minuto</option>
+                <option value="5m">5 minutos</option>
+                <option value="15m">15 minutos</option>
+                <option value="1h" selected>1 hora</option>
+                <option value="4h">4 horas</option>
+                <option value="1d">1 día</option>
+              </select>
+            </div>
+            <button type="submit" class="btn btn-primary btn-block"><i class="fas fa-robot"></i> Crear Bot</button>
+          </form>
+        </div>
+      </div>
+    </section>
+
+    <!-- Market Section -->
+    <section class="section" id="sec-market">
+      <h1 class="page-title">Mercado</h1>
+      <div class="card">
+        <div class="card-header"><h3><i class="fas fa-fire"></i> Top pares por volumen</h3></div>
+        <div class="table-wrap">
+          <table class="table">
+            <thead><tr><th>Par</th><th>Precio</th><th>Cambio 24h</th><th>Volumen 24h</th><th>High</th><th>Low</th></tr></thead>
+            <tbody id="marketTable"><tr><td colspan="6" class="empty">Cargando...</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- Trades Section -->
+    <section class="section" id="sec-trades">
+      <h1 class="page-title">Historial de operaciones</h1>
+      <div class="card">
+        <div class="table-wrap">
+          <table class="table">
+            <thead><tr><th>Fecha</th><th>Bot</th><th>Par</th><th>Lado</th><th>Monto</th><th>Precio</th><th>Total</th></tr></thead>
+            <tbody id="allTrades"><tr><td colspan="7" class="empty">Sin operaciones</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- API Keys Section -->
+    <section class="section" id="sec-keys">
+      <div class="page-header">
+        <h1 class="page-title">API Keys</h1>
+        <button class="btn btn-primary" onclick="showModal('keyModal')"><i class="fas fa-plus"></i> Agregar API Key</button>
+      </div>
+
+      <div class="info-box">
+        <i class="fas fa-info-circle"></i>
+        <div>
+          <strong>¿Cómo crear una API Key en Binance?</strong>
+          <ol>
+            <li>Ingresá a <a href="https://www.binance.com/en/my/settings/api-management" target="_blank">Binance API Management</a></li>
+            <li>Creá una nueva API Key con la etiqueta "AutoTrader"</li>
+            <li><strong>IMPORTANTE:</strong> Habilitá solo "Enable Spot & Margin Trading". NO habilitar retiro.</li>
+            <li>Opcionalmente restringí por IP para mayor seguridad</li>
+            <li>Copiá la API Key y el Secret y pegalos acá abajo</li>
+          </ol>
+        </div>
+      </div>
+
+      <div id="keysList" class="keys-list"></div>
+
+      <!-- Add Key Modal -->
+      <div class="modal" id="keyModal">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h3>Agregar API Key de Binance</h3>
+            <button class="btn-icon" onclick="closeModal('keyModal')"><i class="fas fa-times"></i></button>
+          </div>
+          <form id="addKeyForm">
+            <div class="form-group">
+              <label>Etiqueta (opcional)</label>
+              <input type="text" id="keyLabel" placeholder="Ej: Mi cuenta principal">
+            </div>
+            <div class="form-group">
+              <label>API Key</label>
+              <input type="text" id="keyApiKey" placeholder="Pegá tu API Key de Binance" required>
+            </div>
+            <div class="form-group">
+              <label>API Secret</label>
+              <input type="password" id="keyApiSecret" placeholder="Pegá tu API Secret" required>
+            </div>
+            <button type="submit" class="btn btn-primary btn-block"><i class="fas fa-key"></i> Guardar y probar conexión</button>
+          </form>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <script src="/js/app.js"></script>
+  <script src="/js/dashboard.js"></script>
+</body>
+</html>

@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AutoTrader - Trading Automatizado con IA</title>
+  <link rel="stylesheet" href="/css/app.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+</head>
+<body class="landing">
+
+  <!-- Nav -->
+  <nav class="nav">
+    <div class="nav-container">
+      <a href="/" class="nav-logo"><i class="fas fa-chart-line"></i> AutoTrader</a>
+      <div class="nav-links">
+        <a href="#features">Funciones</a>
+        <a href="#how">Cómo funciona</a>
+        <a href="/login" class="btn btn-outline btn-sm">Iniciar sesión</a>
+        <a href="/register" class="btn btn-primary btn-sm">Crear cuenta</a>
+      </div>
+      <button class="nav-toggle" onclick="document.querySelector('.nav-links').classList.toggle('open')">
+        <i class="fas fa-bars"></i>
+      </button>
+    </div>
+  </nav>
+
+  <!-- Hero -->
+  <section class="hero">
+    <div class="hero-bg"></div>
+    <div class="container hero-content">
+      <div class="hero-badge"><i class="fas fa-robot"></i> Trading automatizado con inteligencia artificial</div>
+      <h1>Tus inversiones en <span class="gradient-text">piloto automático</span></h1>
+      <p class="hero-sub">Conectá tu cuenta de Binance y dejá que nuestros bots operen por vos 24/7 con estrategias probadas. Vos mantenés el control total de tu dinero.</p>
+      <div class="hero-actions">
+        <a href="/register" class="btn btn-primary btn-lg"><i class="fas fa-rocket"></i> Empezar gratis</a>
+        <a href="#how" class="btn btn-outline btn-lg"><i class="fas fa-play-circle"></i> Ver cómo funciona</a>
+      </div>
+      <div class="hero-stats">
+        <div class="stat"><span class="stat-num">3</span><span class="stat-label">Estrategias IA</span></div>
+        <div class="stat"><span class="stat-num">24/7</span><span class="stat-label">Operación continua</span></div>
+        <div class="stat"><span class="stat-num">0%</span><span class="stat-label">Custodia de fondos</span></div>
+      </div>
+    </div>
+
+    <!-- Live ticker -->
+    <div class="ticker-bar" id="tickerBar">
+      <div class="ticker-item"><span class="ticker-symbol">BTC/USDT</span> <span class="ticker-price" id="price-BTC">---</span></div>
+      <div class="ticker-item"><span class="ticker-symbol">ETH/USDT</span> <span class="ticker-price" id="price-ETH">---</span></div>
+      <div class="ticker-item"><span class="ticker-symbol">BNB/USDT</span> <span class="ticker-price" id="price-BNB">---</span></div>
+      <div class="ticker-item"><span class="ticker-symbol">SOL/USDT</span> <span class="ticker-price" id="price-SOL">---</span></div>
+      <div class="ticker-item"><span class="ticker-symbol">XRP/USDT</span> <span class="ticker-price" id="price-XRP">---</span></div>
+    </div>
+  </section>
+
+  <!-- Features -->
+  <section class="features" id="features">
+    <div class="container">
+      <h2 class="section-title">¿Por qué AutoTrader?</h2>
+      <div class="features-grid">
+        <div class="feature-card">
+          <div class="feature-icon"><i class="fas fa-shield-alt"></i></div>
+          <h3>Tu dinero, tu cuenta</h3>
+          <p>Nunca tocamos tus fondos. El bot opera directamente en TU cuenta de Binance mediante API. Solo tiene permiso para operar, nunca para retirar.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon"><i class="fas fa-brain"></i></div>
+          <h3>Estrategias inteligentes</h3>
+          <p>SMA Crossover, RSI y MACD. Algoritmos probados que analizan el mercado y ejecutan operaciones en el momento óptimo.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon"><i class="fas fa-clock"></i></div>
+          <h3>Opera 24/7</h3>
+          <p>El mercado cripto nunca duerme y tu bot tampoco. Monitoreo y ejecución continua sin que tengas que estar pendiente.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon"><i class="fas fa-chart-bar"></i></div>
+          <h3>Dashboard en tiempo real</h3>
+          <p>Precios en vivo, historial de operaciones, rendimiento de cada bot y balance de tu cuenta. Todo en un solo lugar.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon"><i class="fas fa-lock"></i></div>
+          <h3>Seguridad militar</h3>
+          <p>Tus API Keys se almacenan con cifrado AES-256-GCM. Nadie, ni siquiera nosotros, puede leerlas en texto plano.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon"><i class="fas fa-sliders-h"></i></div>
+          <h3>Control total</h3>
+          <p>Configurá cada parámetro: par, monto, intervalo, estrategia. Pausá o detenué tus bots cuando quieras con un clic.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- How it works -->
+  <section class="how" id="how">
+    <div class="container">
+      <h2 class="section-title">¿Cómo funciona?</h2>
+      <div class="steps">
+        <div class="step">
+          <div class="step-num">1</div>
+          <h3>Creá tu cuenta</h3>
+          <p>Registrate gratis en 30 segundos. Solo necesitás email y contraseña.</p>
+        </div>
+        <div class="step">
+          <div class="step-num">2</div>
+          <h3>Conectá Binance</h3>
+          <p>Generá una API Key en Binance (solo con permiso de trading, SIN retiro) y pegala en el dashboard.</p>
+        </div>
+        <div class="step">
+          <div class="step-num">3</div>
+          <h3>Configurá tu bot</h3>
+          <p>Elegí el par (BTC/USDT, ETH/USDT...), la estrategia y el monto por operación.</p>
+        </div>
+        <div class="step">
+          <div class="step-num">4</div>
+          <h3>Activá y listo</h3>
+          <p>El bot empieza a operar automáticamente. Vos seguís todo desde el dashboard en tiempo real.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- CTA -->
+  <section class="cta">
+    <div class="container">
+      <h2>¿Listo para automatizar tus inversiones?</h2>
+      <p>Unite a la nueva generación de inversores inteligentes.</p>
+      <a href="/register" class="btn btn-primary btn-lg"><i class="fas fa-rocket"></i> Crear cuenta gratis</a>
+    </div>
+  </section>
+
+  <!-- Footer -->
+  <footer class="footer">
+    <div class="container footer-content">
+      <div class="footer-brand"><i class="fas fa-chart-line"></i> AutoTrader</div>
+      <p>Trading automatizado. Tu dinero, tus reglas.</p>
+      <p class="footer-disclaimer">⚠️ Operar criptomonedas conlleva riesgo. Los rendimientos pasados no garantizan resultados futuros. Operá con responsabilidad.</p>
+    </div>
+  </footer>
+
+  <script src="/js/app.js"></script>
+  <script>
+    connectPriceStream();
+  </script>
+</body>
+</html>
