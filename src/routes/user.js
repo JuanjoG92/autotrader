@@ -15,7 +15,7 @@ router.get('/keys', auth, (req, res) => {
 
 router.post('/keys', auth, (req, res) => {
   try {
-    const { apiKey, apiSecret, exchange = 'binance', label = '', permissions = 'spot' } = req.body;
+    const { apiKey, apiSecret, exchange = 'bybit', label = '', permissions = 'spot' } = req.body;
     if (!apiKey || !apiSecret) return res.status(400).json({ error: 'API Key y Secret requeridos' });
 
     const db = getDB();

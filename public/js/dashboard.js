@@ -270,6 +270,7 @@
         body: JSON.stringify({
           apiKey: document.getElementById('keyApiKey').value.trim(),
           apiSecret: document.getElementById('keyApiSecret').value.trim(),
+          exchange: document.getElementById('keyExchange').value,
           label: document.getElementById('keyLabel').value.trim(),
         }),
       });

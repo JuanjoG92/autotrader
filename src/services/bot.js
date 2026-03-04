@@ -6,6 +6,18 @@ const { getOHLCV, createOrder } = require('./binance');
 const activeCrons = {};
 let broadcastFn = () => {};
 
+function fetchJSON(url) {
+  return new Promise((resolve, reject) => {
+    https.get(url, { headers: { 'Accept': 'application/json', 'Accept-Encoding': 'identity' } }, (res) => {
+      let data = '';
+      res.on('data', (chunk) => { data += chunk; });
+      res.on('end', () => {
+        try { resolve(JSON.parse(data)); } catch (e) { reject(e); }
+      });
+    }).on('error', reject);
+  });
+}
+
 // -- Strategies --
 
 function smaStrategy(candles, config) {
@@ -102,9 +114,12 @@ async function executeBot(bot) {
     const total = price * tradeAmount;
     const fee = order.fee ? order.fee.cost || 0 : 0;
 
+    const keyRow = db.prepare('SELECT exchange FROM api_keys WHERE id = ?').get(bot.api_key_id);
+    const exchangeName = keyRow ? keyRow.exchange : 'bybit';
+
     db.prepare(`INSERT INTO trades (user_id, bot_id, exchange, pair, side, amount, price, total, fee, order_id)
-      VALUES (?, ?, 'binance', ?, ?, ?, ?, ?, ?, ?)`).run(
-      bot.user_id, bot.id, bot.pair, signal, tradeAmount, price, total, fee, order.id || ''
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+      bot.user_id, bot.id, exchangeName, bot.pair, signal, tradeAmount, price, total, fee, order.id || ''
     );
 
     broadcastFn({ type: 'trade', botId: bot.id, signal, pair: bot.pair, price, amount: tradeAmount });
@@ -145,39 +160,30 @@ function startAllActiveBots(broadcast) {
   console.log('Resumed ' + bots.length + ' active bots');
 }
 
-// -- Price stream via CoinGecko (works from any IP) --
-
-function fetchJSON(url) {
-  return new Promise((resolve, reject) => {
-    https.get(url, { headers: { 'Accept': 'application/json' } }, (res) => {
-      let data = '';
-      res.on('data', (chunk) => { data += chunk; });
-      res.on('end', () => {
-        try { resolve(JSON.parse(data)); } catch (e) { reject(e); }
-      });
-    }).on('error', reject);
-  });
-}
+// -- Price stream via CoinCap (free, no rate limit) --
 
 const COIN_MAP = {
   'BTC/USDT': 'bitcoin',
   'ETH/USDT': 'ethereum',
-  'BNB/USDT': 'binancecoin',
+  'BNB/USDT': 'binance-coin',
   'SOL/USDT': 'solana',
-  'XRP/USDT': 'ripple',
+  'XRP/USDT': 'xrp',
 };
 
 function priceStream(broadcast) {
   const ids = Object.values(COIN_MAP).join(',');
-  const url = 'https://api.coingecko.com/api/v3/simple/price?ids=' + ids + '&vs_currencies=usd&include_24hr_change=true';
+  const url = 'https://api.coincap.io/v2/assets?ids=' + ids;
 
   async function fetchPrices() {
     try {
       const json = await fetchJSON(url);
-      const data = Object.entries(COIN_MAP).map(([symbol, id]) => ({
-        symbol,
-        price: json[id] ? json[id].usd : 0,
-        change: json[id] ? json[id].usd_24h_change : 0,
+      if (!json.data) return;
+      const idToSymbol = {};
+      Object.entries(COIN_MAP).forEach(([sym, id]) => { idToSymbol[id] = sym; });
+      const data = json.data.map(asset => ({
+        symbol: idToSymbol[asset.id] || asset.symbol + '/USDT',
+        price: parseFloat(asset.priceUsd) || 0,
+        change: parseFloat(asset.changePercent24Hr) || 0,
       }));
       broadcast({ type: 'prices', data });
     } catch (err) {
@@ -186,7 +192,7 @@ function priceStream(broadcast) {
   }
 
   fetchPrices();
-  setInterval(fetchPrices, 15000);
+  setInterval(fetchPrices, 10000);
 }
 
 module.exports = { startBot, stopBot, startAllActiveBots, priceStream, STRATEGIES };

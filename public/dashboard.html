@@ -211,14 +211,14 @@
       <div class="info-box">
         <i class="fas fa-info-circle"></i>
         <div>
-          <strong>¿Cómo crear una API Key en Binance?</strong>
+          <strong>¿Cómo conectar tu exchange?</strong>
           <ol>
-            <li>Ingresá a <a href="https://www.binance.com/en/my/settings/api-management" target="_blank">Binance API Management</a></li>
+            <li>Ingresá a la sección de API de tu exchange (<a href="https://www.bybit.com/app/user/api-management" target="_blank">Bybit</a>, <a href="https://www.binance.com/en/my/settings/api-management" target="_blank">Binance</a>, <a href="https://www.kucoin.com/account/api" target="_blank">KuCoin</a>)</li>
             <li>Creá una nueva API Key con la etiqueta "AutoTrader"</li>
-            <li><strong>IMPORTANTE:</strong> Habilitá solo "Enable Spot & Margin Trading". NO habilitar retiro.</li>
-            <li>Opcionalmente restringí por IP para mayor seguridad</li>
+            <li><strong>IMPORTANTE:</strong> Habilitá solo "Spot Trading". NO habilitar retiro.</li>
             <li>Copiá la API Key y el Secret y pegalos acá abajo</li>
           </ol>
+          <small>💡 <strong>Recomendado:</strong> Bybit funciona sin restricciones geográficas.</small>
         </div>
       </div>
 
@@ -228,17 +228,27 @@
       <div class="modal" id="keyModal">
         <div class="modal-content">
           <div class="modal-header">
-            <h3>Agregar API Key de Binance</h3>
+            <h3>Agregar API Key</h3>
             <button class="btn-icon" onclick="closeModal('keyModal')"><i class="fas fa-times"></i></button>
           </div>
           <form id="addKeyForm">
+            <div class="form-group">
+              <label>Exchange</label>
+              <select id="keyExchange">
+                <option value="bybit" selected>Bybit (recomendado)</option>
+                <option value="binance">Binance</option>
+                <option value="kucoin">KuCoin</option>
+                <option value="okx">OKX</option>
+                <option value="bitget">Bitget</option>
+              </select>
+            </div>
             <div class="form-group">
               <label>Etiqueta (opcional)</label>
               <input type="text" id="keyLabel" placeholder="Ej: Mi cuenta principal">
             </div>
             <div class="form-group">
               <label>API Key</label>
-              <input type="text" id="keyApiKey" placeholder="Pegá tu API Key de Binance" required>
+              <input type="text" id="keyApiKey" placeholder="Pegá tu API Key" required>
             </div>
             <div class="form-group">
               <label>API Secret</label>

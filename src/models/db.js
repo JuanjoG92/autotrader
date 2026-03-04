@@ -32,7 +32,7 @@ function initDB() {
     CREATE TABLE IF NOT EXISTS api_keys (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       user_id INTEGER NOT NULL,
-      exchange TEXT NOT NULL DEFAULT 'binance',
+      exchange TEXT NOT NULL DEFAULT 'bybit',
       label TEXT DEFAULT '',
       api_key_enc TEXT NOT NULL,
       api_secret_enc TEXT NOT NULL,
@@ -61,7 +61,7 @@ function initDB() {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       user_id INTEGER NOT NULL,
       bot_id INTEGER,
-      exchange TEXT NOT NULL DEFAULT 'binance',
+      exchange TEXT NOT NULL DEFAULT 'bybit',
       pair TEXT NOT NULL,
       side TEXT NOT NULL,
       amount REAL NOT NULL,

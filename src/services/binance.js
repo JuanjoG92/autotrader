@@ -3,9 +3,11 @@ const https = require('https');
 const { decrypt } = require('./encryption');
 const { getDB } = require('../models/db');
 
+// ── HTTP helper ──
+
 function fetchJSON(url) {
   return new Promise((resolve, reject) => {
-    https.get(url, { headers: { 'Accept': 'application/json' } }, (res) => {
+    https.get(url, { headers: { 'Accept': 'application/json', 'Accept-Encoding': 'identity' } }, (res) => {
       let data = '';
       res.on('data', (chunk) => { data += chunk; });
       res.on('end', () => {
@@ -15,10 +17,33 @@ function fetchJSON(url) {
   });
 }
 
+// ── CoinCap asset ID mapping ──
+
+const COINCAP_IDS = {
+  'BTC': 'bitcoin', 'ETH': 'ethereum', 'BNB': 'binance-coin',
+  'SOL': 'solana', 'XRP': 'xrp', 'ADA': 'cardano',
+  'DOGE': 'dogecoin', 'MATIC': 'polygon', 'DOT': 'polkadot',
+  'AVAX': 'avalanche', 'LINK': 'chainlink', 'UNI': 'uniswap',
+  'SHIB': 'shiba-inu', 'LTC': 'litecoin', 'TRX': 'tron',
+  'ATOM': 'cosmos', 'FIL': 'filecoin', 'APT': 'aptos',
+  'NEAR': 'near-protocol', 'ARB': 'arbitrum',
+};
+
+function getCoinCapId(symbol) {
+  const base = symbol.split('/')[0];
+  return COINCAP_IDS[base] || base.toLowerCase();
+}
+
+// ── Exchange (ccxt) ──
+
+const SUPPORTED_EXCHANGES = ['bybit', 'binance', 'kucoin', 'okx', 'bitget'];
+
 function createExchange(apiKeyRow) {
   const apiKey = decrypt(apiKeyRow.api_key_enc);
   const secret = decrypt(apiKeyRow.api_secret_enc);
-  const ExchangeClass = ccxt[apiKeyRow.exchange] || ccxt.binance;
+  const exchangeName = apiKeyRow.exchange || 'bybit';
+  const ExchangeClass = ccxt[exchangeName];
+  if (!ExchangeClass) throw new Error('Exchange no soportado: ' + exchangeName);
   return new ExchangeClass({
     apiKey,
     secret,
@@ -44,30 +69,33 @@ async function getBalances(userId, apiKeyId) {
   return assets;
 }
 
+// ── Market data via CoinCap (free, no rate limit) ──
+
 async function getTicker(pair) {
-  const COIN_IDS = {
-    'BTC': 'bitcoin', 'ETH': 'ethereum', 'BNB': 'binancecoin',
-    'SOL': 'solana', 'XRP': 'ripple', 'ADA': 'cardano',
-    'DOGE': 'dogecoin', 'MATIC': 'matic-network', 'DOT': 'polkadot',
-    'AVAX': 'avalanche-2', 'LINK': 'chainlink', 'UNI': 'uniswap',
-  };
-  const base = pair.split('/')[0];
-  const id = COIN_IDS[base] || base.toLowerCase();
-  const url = 'https://api.coingecko.com/api/v3/simple/price?ids=' + id + '&vs_currencies=usd&include_24hr_change=true&include_24hr_vol=true';
+  const id = getCoinCapId(pair);
+  const url = 'https://api.coincap.io/v2/assets/' + id;
   const json = await fetchJSON(url);
-  const d = json[id] || {};
-  return { symbol: pair, last: d.usd || 0, percentage: d.usd_24h_change || 0, quoteVolume: d.usd_24h_vol || 0 };
+  const d = json.data || {};
+  return {
+    symbol: pair,
+    last: parseFloat(d.priceUsd) || 0,
+    percentage: parseFloat(d.changePercent24Hr) || 0,
+    quoteVolume: parseFloat(d.volumeUsd24Hr) || 0,
+  };
 }
 
 async function getOHLCV(pair, timeframe, limit) {
-  const COIN_IDS = { 'BTC': 'bitcoin', 'ETH': 'ethereum', 'BNB': 'binancecoin', 'SOL': 'solana', 'XRP': 'ripple', 'ADA': 'cardano', 'DOGE': 'dogecoin' };
-  const base = pair.split('/')[0];
-  const id = COIN_IDS[base] || base.toLowerCase();
-  const days = timeframe === '1d' ? limit : timeframe === '4h' ? Math.ceil(limit / 6) : timeframe === '1h' ? Math.ceil(limit / 24) : Math.ceil(limit / 288);
-  const url = 'https://api.coingecko.com/api/v3/coins/' + id + '/market_chart?vs_currency=usd&days=' + Math.min(days, 90);
+  const id = getCoinCapId(pair);
+  const intervalMap = { '1m': 'm1', '5m': 'm5', '15m': 'm15', '30m': 'm30', '1h': 'h1', '2h': 'h2', '4h': 'h6', '1d': 'd1' };
+  const interval = intervalMap[timeframe] || 'h1';
+  const msMap = { 'm1': 60000, 'm5': 300000, 'm15': 900000, 'm30': 1800000, 'h1': 3600000, 'h2': 7200000, 'h6': 21600000, 'd1': 86400000 };
+  const span = (msMap[interval] || 3600000) * limit;
+  const end = Date.now();
+  const start = end - span;
+  const url = 'https://api.coincap.io/v2/assets/' + id + '/history?interval=' + interval + '&start=' + start + '&end=' + end;
   const json = await fetchJSON(url);
-  if (!json.prices) return [];
-  return json.prices.map((p, i) => [p[0], 0, 0, 0, p[1], 0]);
+  if (!json.data || !json.data.length) return [];
+  return json.data.map(p => [p.time, parseFloat(p.priceUsd), parseFloat(p.priceUsd), parseFloat(p.priceUsd), parseFloat(p.priceUsd), 0]);
 }
 
 async function createOrder(userId, apiKeyId, pair, side, amount) {
@@ -82,16 +110,17 @@ async function testConnection(userId, apiKeyId) {
 }
 
 async function getTopPairs() {
-  const url = 'https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=20&page=1&sparkline=false&price_change_percentage=24h';
+  const url = 'https://api.coincap.io/v2/assets?limit=20';
   const json = await fetchJSON(url);
-  return json.map(c => ({
+  if (!json.data) return [];
+  return json.data.map(c => ({
     symbol: (c.symbol || '').toUpperCase() + '/USDT',
-    price: c.current_price || 0,
-    change24h: c.price_change_percentage_24h || 0,
-    volume: c.total_volume || 0,
-    high: c.high_24h || 0,
-    low: c.low_24h || 0,
+    price: parseFloat(c.priceUsd) || 0,
+    change24h: parseFloat(c.changePercent24Hr) || 0,
+    volume: parseFloat(c.volumeUsd24Hr) || 0,
+    high: parseFloat(c.priceUsd) || 0,
+    low: parseFloat(c.priceUsd) || 0,
   }));
 }
 
-module.exports = { getBalances, getTicker, getOHLCV, createOrder, testConnection, getExchangeForUser, getTopPairs };\n
+module.exports = { getBalances, getTicker, getOHLCV, createOrder, testConnection, getExchangeForUser, getTopPairs, SUPPORTED_EXCHANGES };
