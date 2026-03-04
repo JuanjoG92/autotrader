@@ -8,7 +8,14 @@ let broadcastFn = () => {};
 
 function fetchJSON(url) {
   return new Promise((resolve, reject) => {
-    https.get(url, { headers: { 'Accept': 'application/json', 'Accept-Encoding': 'identity' } }, (res) => {
+    const opts = {
+      headers: {
+        'Accept': 'application/json',
+        'Accept-Encoding': 'identity',
+        'User-Agent': 'AutoTrader/1.0'
+      }
+    };
+    https.get(url, opts, (res) => {
       let data = '';
       res.on('data', (chunk) => { data += chunk; });
       res.on('end', () => {
