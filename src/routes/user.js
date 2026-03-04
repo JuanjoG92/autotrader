@@ -18,9 +18,8 @@ router.post('/keys', auth, (req, res) => {
     const { apiKey, apiSecret, exchange = 'bybit', label = '', permissions = 'spot' } = req.body;
     if (!apiKey || !apiSecret) return res.status(400).json({ error: 'API Key y Secret requeridos' });
 
-    const BLOCKED_EXCHANGES = ['binance'];
-    if (BLOCKED_EXCHANGES.includes(exchange)) {
-      return res.status(400).json({ error: 'Binance está bloqueado desde este servidor por restricción geográfica. Usá Bybit o KuCoin en su lugar.' });
+    if (exchange === 'binance' && !process.env.BINANCE_PROXY) {
+      return res.status(400).json({ error: 'Binance requiere configuración de proxy en el servidor. Contactá al administrador o usá Bybit/KuCoin.' });
     }
 
     const db = getDB();

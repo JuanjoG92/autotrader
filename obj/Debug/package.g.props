@@ -1,0 +1,24 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project>
+  <PropertyGroup>
+    <PackageJsonName Condition="$(PackageJsonName) == ''">autotrader</PackageJsonName>
+    <PackageJsonVersion Condition="$(PackageJsonVersion) == ''">1.0.0</PackageJsonVersion>
+    <PackageJsonDescription Condition="$(PackageJsonDescription) == ''">Plataforma de trading automatizado con IA</PackageJsonDescription>
+    <PackageJsonMain Condition="$(PackageJsonMain) == ''">server.js</PackageJsonMain>
+    <PackageJsonScriptsStart Condition="$(PackageJsonScriptsStart) == ''">node server.js</PackageJsonScriptsStart>
+    <PackageJsonScriptsDev Condition="$(PackageJsonScriptsDev) == ''">nodemon server.js</PackageJsonScriptsDev>
+    <PackageJsonDependenciesExpress Condition="$(PackageJsonDependenciesExpress) == ''">^4.18.2</PackageJsonDependenciesExpress>
+    <PackageJsonDependenciesCors Condition="$(PackageJsonDependenciesCors) == ''">^2.8.5</PackageJsonDependenciesCors>
+    <PackageJsonDependenciesDotenv Condition="$(PackageJsonDependenciesDotenv) == ''">^16.3.1</PackageJsonDependenciesDotenv>
+    <PackageJsonDependenciesBcryptjs Condition="$(PackageJsonDependenciesBcryptjs) == ''">^2.4.3</PackageJsonDependenciesBcryptjs>
+    <PackageJsonDependenciesJsonwebtoken Condition="$(PackageJsonDependenciesJsonwebtoken) == ''">^9.0.2</PackageJsonDependenciesJsonwebtoken>
+    <PackageJsonDependenciesBetterSqlite3 Condition="$(PackageJsonDependenciesBetterSqlite3) == ''">^9.4.3</PackageJsonDependenciesBetterSqlite3>
+    <PackageJsonDependenciesCcxt Condition="$(PackageJsonDependenciesCcxt) == ''">^4.2.0</PackageJsonDependenciesCcxt>
+    <PackageJsonDependenciesNodeCron Condition="$(PackageJsonDependenciesNodeCron) == ''">^3.0.3</PackageJsonDependenciesNodeCron>
+    <PackageJsonDependenciesWs Condition="$(PackageJsonDependenciesWs) == ''">^8.16.0</PackageJsonDependenciesWs>
+    <PackageJsonDependenciesHelmet Condition="$(PackageJsonDependenciesHelmet) == ''">^7.1.0</PackageJsonDependenciesHelmet>
+    <PackageJsonDependenciesHttpsProxyAgent Condition="$(PackageJsonDependenciesHttpsProxyAgent) == ''">^7.0.4</PackageJsonDependenciesHttpsProxyAgent>
+    <PackageJsonDependenciesSocksProxyAgent Condition="$(PackageJsonDependenciesSocksProxyAgent) == ''">^8.0.3</PackageJsonDependenciesSocksProxyAgent>
+    <PackageJsonDevdependenciesNodemon Condition="$(PackageJsonDevdependenciesNodemon) == ''">^3.0.2</PackageJsonDevdependenciesNodemon>
+  </PropertyGroup>
+</Project>

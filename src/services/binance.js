@@ -66,12 +66,25 @@ function createExchange(apiKeyRow) {
   const exchangeName = apiKeyRow.exchange || 'bybit';
   const ExchangeClass = ccxt[exchangeName];
   if (!ExchangeClass) throw new Error('Exchange no soportado: ' + exchangeName);
-  return new ExchangeClass({
+
+  const config = {
     apiKey,
     secret,
     enableRateLimit: true,
     options: { defaultType: 'spot' },
-  });
+  };
+
+  // Proxy for Binance (VPS IP is geo-blocked by Binance)
+  if (exchangeName === 'binance' && process.env.BINANCE_PROXY) {
+    const proxy = process.env.BINANCE_PROXY;
+    if (proxy.startsWith('socks')) {
+      config.socksProxy = proxy;
+    } else {
+      config.httpsProxy = proxy;
+    }
+  }
+
+  return new ExchangeClass(config);
 }
 
 function getExchangeForUser(userId, apiKeyId) {

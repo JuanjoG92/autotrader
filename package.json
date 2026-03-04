@@ -17,7 +17,9 @@
     "ccxt": "^4.2.0",
     "node-cron": "^3.0.3",
     "ws": "^8.16.0",
-    "helmet": "^7.1.0"
+    "helmet": "^7.1.0",
+    "https-proxy-agent": "^7.0.4",
+    "socks-proxy-agent": "^8.0.3"
   },
   "devDependencies": {
     "nodemon": "^3.0.2"
