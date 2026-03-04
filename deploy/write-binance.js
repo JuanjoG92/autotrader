@@ -1,4 +1,6 @@
-const ccxt = require('ccxt');
+const fs = require('fs');
+
+const code = `const ccxt = require('ccxt');
 const https = require('https');
 const { decrypt } = require('./encryption');
 const { getDB } = require('../models/db');
@@ -94,4 +96,8 @@ async function getTopPairs() {
   }));
 }
 
-module.exports = { getBalances, getTicker, getOHLCV, createOrder, testConnection, getExchangeForUser, getTopPairs };\n
+module.exports = { getBalances, getTicker, getOHLCV, createOrder, testConnection, getExchangeForUser, getTopPairs };
+`;
+
+fs.writeFileSync('src/services/binance.js', code.trim() + '\\n');
+console.log('binance.js written OK');

@@ -1,4 +1,6 @@
-const cron = require('node-cron');
+const fs = require('fs');
+
+const botCode = `const cron = require('node-cron');
 const https = require('https');
 const { getDB } = require('../models/db');
 const { getOHLCV, createOrder } = require('./binance');
@@ -102,8 +104,8 @@ async function executeBot(bot) {
     const total = price * tradeAmount;
     const fee = order.fee ? order.fee.cost || 0 : 0;
 
-    db.prepare(`INSERT INTO trades (user_id, bot_id, exchange, pair, side, amount, price, total, fee, order_id)
-      VALUES (?, ?, 'binance', ?, ?, ?, ?, ?, ?, ?)`).run(
+    db.prepare(\`INSERT INTO trades (user_id, bot_id, exchange, pair, side, amount, price, total, fee, order_id)
+      VALUES (?, ?, 'binance', ?, ?, ?, ?, ?, ?, ?)\`).run(
       bot.user_id, bot.id, bot.pair, signal, tradeAmount, price, total, fee, order.id || ''
     );
 
@@ -190,3 +192,7 @@ function priceStream(broadcast) {
 }
 
 module.exports = { startBot, stopBot, startAllActiveBots, priceStream, STRATEGIES };
+`;
+
+fs.writeFileSync('src/services/bot.js', botCode.trim() + '\n');
+console.log('bot.js written OK');
