@@ -1,0 +1,89 @@
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003" ToolsVersion="4.0">
+  <PropertyGroup>
+    <VisualStudioVersion Condition="'$(VisualStudioVersion)' == ''">17.0</VisualStudioVersion>
+    <ProjectGuid>a1b2c3d4-e5f6-7890-abcd-ef1234567890</ProjectGuid>
+    <ProjectHome>.</ProjectHome>
+    <StartupFile>server.js</StartupFile>
+    <SearchPath></SearchPath>
+    <WorkingDirectory>.</WorkingDirectory>
+    <OutputPath>.</OutputPath>
+    <ProjectTypeGuids>{3AF33F2E-1136-4D97-BBB7-1795711AC8B8};{9092AA53-FB77-4645-B42D-1CCCA6BD08BD}</ProjectTypeGuids>
+    <TypeScriptSourceMap>true</TypeScriptSourceMap>
+    <TypeScriptModuleKind>CommonJS</TypeScriptModuleKind>
+    <EnableTypeScript>false</EnableTypeScript>
+    <StartWebBrowser>True</StartWebBrowser>
+    <ScriptArguments></ScriptArguments>
+    <NodejsPort>3800</NodejsPort>
+    <LaunchUrl>http://localhost:3800</LaunchUrl>
+    <SaveNodeJsSettingsInProjectFile>True</SaveNodeJsSettingsInProjectFile>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)' == 'Debug' ">
+    <DebugSymbols>true</DebugSymbols>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)' == 'Release' ">
+    <DebugSymbols>true</DebugSymbols>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- Root -->
+    <Content Include="package.json" />
+    <Content Include=".env.example" />
+    <Content Include=".gitignore" />
+
+    <!-- Server entry -->
+    <Compile Include="server.js" />
+
+    <!-- Backend: middleware -->
+    <Compile Include="src\middleware\auth.js" />
+
+    <!-- Backend: models -->
+    <Compile Include="src\models\db.js" />
+
+    <!-- Backend: routes -->
+    <Compile Include="src\routes\auth.js" />
+    <Compile Include="src\routes\trading.js" />
+    <Compile Include="src\routes\user.js" />
+    <Compile Include="src\routes\webhook.js" />
+
+    <!-- Backend: services -->
+    <Compile Include="src\services\binance.js" />
+    <Compile Include="src\services\bot.js" />
+    <Compile Include="src\services\encryption.js" />
+
+    <!-- Frontend: HTML -->
+    <Content Include="public\index.html" />
+    <Content Include="public\login.html" />
+    <Content Include="public\register.html" />
+    <Content Include="public\dashboard.html" />
+
+    <!-- Frontend: CSS -->
+    <Content Include="public\css\app.css" />
+
+    <!-- Frontend: JS -->
+    <Content Include="public\js\app.js" />
+    <Content Include="public\js\auth.js" />
+    <Content Include="public\js\dashboard.js" />
+
+    <!-- Deploy -->
+    <Content Include="deploy\nginx.conf" />
+    <Content Include="deploy\setup-vps.sh" />
+    <Content Include="deploy\write-binance.js" />
+    <Content Include="deploy\write-bot.js" />
+
+    <!-- Docs -->
+    <Content Include=".github\copilot-instructions.md" />
+  </ItemGroup>
+  <ItemGroup>
+    <Folder Include="src\" />
+    <Folder Include="src\middleware\" />
+    <Folder Include="src\models\" />
+    <Folder Include="src\routes\" />
+    <Folder Include="src\services\" />
+    <Folder Include="public\" />
+    <Folder Include="public\css\" />
+    <Folder Include="public\js\" />
+    <Folder Include="deploy\" />
+    <Folder Include="data\" />
+    <Folder Include=".github\" />
+  </ItemGroup>
+  <Import Project="$(MSBuildToolsPath)\Microsoft.Common.targets" Condition="Exists('$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props')" />
+</Project>
