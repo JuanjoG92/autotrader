@@ -160,30 +160,27 @@ function startAllActiveBots(broadcast) {
   console.log('Resumed ' + bots.length + ' active bots');
 }
 
-// -- Price stream via CoinCap (free, no rate limit) --
+// -- Price stream via CoinGecko (with cache, 30s interval) --
 
 const COIN_MAP = {
   'BTC/USDT': 'bitcoin',
   'ETH/USDT': 'ethereum',
-  'BNB/USDT': 'binance-coin',
+  'BNB/USDT': 'binancecoin',
   'SOL/USDT': 'solana',
-  'XRP/USDT': 'xrp',
+  'XRP/USDT': 'ripple',
 };
 
 function priceStream(broadcast) {
   const ids = Object.values(COIN_MAP).join(',');
-  const url = 'https://api.coincap.io/v2/assets?ids=' + ids;
+  const url = 'https://api.coingecko.com/api/v3/simple/price?ids=' + ids + '&vs_currencies=usd&include_24hr_change=true';
 
   async function fetchPrices() {
     try {
       const json = await fetchJSON(url);
-      if (!json.data) return;
-      const idToSymbol = {};
-      Object.entries(COIN_MAP).forEach(([sym, id]) => { idToSymbol[id] = sym; });
-      const data = json.data.map(asset => ({
-        symbol: idToSymbol[asset.id] || asset.symbol + '/USDT',
-        price: parseFloat(asset.priceUsd) || 0,
-        change: parseFloat(asset.changePercent24Hr) || 0,
+      const data = Object.entries(COIN_MAP).map(([symbol, id]) => ({
+        symbol,
+        price: json[id] ? json[id].usd : 0,
+        change: json[id] ? json[id].usd_24h_change : 0,
       }));
       broadcast({ type: 'prices', data });
     } catch (err) {
@@ -192,7 +189,7 @@ function priceStream(broadcast) {
   }
 
   fetchPrices();
-  setInterval(fetchPrices, 10000);
+  setInterval(fetchPrices, 30000);
 }
 
 module.exports = { startBot, stopBot, startAllActiveBots, priceStream, STRATEGIES };
