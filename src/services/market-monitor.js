@@ -183,16 +183,7 @@ async function pollOnce() {
 
   for (const item of watchlist) {
     try {
-      // getQuote con ticker simple → devuelve item del plazo 24hs ARS
       const quote = await cocos.getQuote(item.ticker, item.segment);
-      // Log temporal para verificar campos de precio
-      if (['SHOP','BIOX','HOOD','GGAL'].includes(item.ticker)) {
-        console.log(`[Market] ${item.ticker} raw:`, JSON.stringify({
-          last_price: quote.last_price, close_price: quote.close_price,
-          variation: quote.variation, volume: quote.volume,
-          long_ticker: quote.long_ticker
-        }));
-      }
       const { price, variation, volume, open, high, low } = parseItem(quote || {});
       if (price > 0) {
         savePrice(item.ticker, price, variation, volume, open, high, low);
