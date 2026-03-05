@@ -163,10 +163,14 @@ async function pollOnce() {
 
   // ── Estrategia 1: batch por lista (funciona con mercado abierto Y cerrado) ──
   try {
+    console.log('[Market] Iniciando batch poll...');
     const [accR, cdrR] = await Promise.allSettled([
       cocos.getMarketList('ACCIONES', 'LIDERES', '24hs', 'ARS', 'C', 1, 100),
       cocos.getMarketList('CEDEARS',  'CEDEARS', '24hs', 'ARS', 'C', 1, 100),
     ]);
+
+    console.log('[Market] accR:', accR.status, accR.status==='fulfilled' ? JSON.stringify(accR.value).substring(0,200) : accR.reason?.message);
+    console.log('[Market] cdrR:', cdrR.status, cdrR.status==='fulfilled' ? JSON.stringify(cdrR.value).substring(0,200) : cdrR.reason?.message);
 
     const byTicker = {};
     for (const r of [accR, cdrR]) {
