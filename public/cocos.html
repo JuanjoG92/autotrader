@@ -263,7 +263,7 @@
             <tr>
               <th>Instrumento</th>
               <th>Precio</th>
-              <th>Var %</th>
+              <th style="cursor:pointer;user-select:none" onclick="toggleSortVar()" id="thVar">Var % <span id="sortIcon" style="font-size:.6rem"></span></th>
               <th>RSI</th>
               <th>SMA20</th>
               <th>Tend.5p</th>
@@ -354,6 +354,7 @@ const _token = localStorage.getItem('at_token') || localStorage.getItem('token')
 let _side = 'BUY';
 let _allPrices = [];
 let _filter = 'all';
+let _sortVar = 0; // 0=none, 1=desc(mayor a menor), -1=asc
 let _modalTicker = '';
 let _modalPrice = 0;
 let _lastSignals = {};
@@ -390,12 +391,21 @@ function setFilter(f) {
   renderTable();
 }
 
+function toggleSortVar() {
+  _sortVar = _sortVar === 1 ? -1 : _sortVar === -1 ? 0 : 1;
+  document.getElementById('sortIcon').textContent = _sortVar === 1 ? '▼' : _sortVar === -1 ? '▲' : '';
+  renderTable();
+}
+
 function getFilteredPrices() {
   let data = [..._allPrices];
   if (_filter === 'acc') data = data.filter(d => !CEDEARS.has(d.ticker));
   else if (_filter === 'cdr') data = data.filter(d => CEDEARS.has(d.ticker));
   else if (_filter === 'top') data = data.filter(d => (parseFloat(d.variation)||0) > 0).sort((a,b)=>(parseFloat(b.variation)||0)-(parseFloat(a.variation)||0)).slice(0,20);
   else if (_filter === 'bot') data = data.filter(d => (parseFloat(d.variation)||0) < 0).sort((a,b)=>(parseFloat(a.variation)||0)-(parseFloat(b.variation)||0)).slice(0,20);
+  if (_sortVar !== 0) data.sort((a,b) => _sortVar === 1
+    ? (parseFloat(b.variation)||0) - (parseFloat(a.variation)||0)
+    : (parseFloat(a.variation)||0) - (parseFloat(b.variation)||0));
   return data;
 }
 
