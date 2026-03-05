@@ -1,7 +1,7 @@
 // public/js/cocos.js — Panel Cocos Capital + AI Trader
 
 const API = '/api';
-let _token = localStorage.getItem('token') || '';
+let _token = localStorage.getItem('at_token') || '';
 let _orderSide = 'BUY';
 let _ws = null;
 
