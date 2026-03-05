@@ -60,14 +60,26 @@ router.post('/admin/tokens', auth, ownerOnly, async (req, res) => {
 
 // GET /api/cocos/debug — ver respuesta real de la API para un ticker
 router.get('/debug', auth, ownerOnly, async (req, res) => {
-  const ticker = req.query.ticker || 'GGAL';
-  try {
-    const search = await cocos.searchTicker(ticker);
-    const list   = await cocos._callRaw('GET', `api/v1/markets/tickers/?instrument_type=ACCIONES&settlement_days=0002&currency=ARS&segment=C&page=1&size=5`).catch(e => ({ error: e.message }));
-    res.json({ search, list });
-  } catch (e) {
-    res.json({ error: e.message });
+  const ticker = (req.query.ticker || 'GGAL').toUpperCase();
+  const out = {};
+
+  const tests = [
+    ['search',            `api/v1/markets/tickers/search?q=${ticker}`],
+    ['list_lideres',      `api/v1/markets/tickers/?instrument_type=ACCIONES&instrument_subtype=LIDERES&settlement_days=0002&currency=ARS&segment=C&page=1&size=5`],
+    ['list_nosubtype',    `api/v1/markets/tickers/?instrument_type=ACCIONES&settlement_days=0002&currency=ARS&segment=C&page=1&size=5`],
+    ['list_ced_nosubtype',`api/v1/markets/tickers/?instrument_type=CEDEARS&settlement_days=0002&currency=ARS&segment=C&page=1&size=5`],
+    ['quote_long',        `api/v1/markets/tickers/${encodeURIComponent(ticker+'-0002-C-CT-ARS')}?segment=C`],
+    ['quote_simple',      `api/v1/markets/tickers/${ticker}?segment=C`],
+    ['quote_simple_full', `api/v1/markets/tickers/${ticker}?segment=C&settlement_days=0002&currency=ARS`],
+    ['market_status',     `api/v1/calendar/open-market`],
+  ];
+
+  for (const [name, url] of tests) {
+    try { out[name] = await cocos._callRaw('GET', url); }
+    catch (e) { out[name] = { ERROR: e.message }; }
   }
+
+  res.json(out);
 });
 
 // GET /api/cocos/market

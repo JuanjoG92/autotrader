@@ -703,6 +703,17 @@ document.addEventListener('DOMContentLoaded', () => {
   setInterval(loadMarketPrices, 30000);
   setInterval(loadBuyingPower, 60000);
   setInterval(loadSignals, 60000);
+
+  // Debug automático al cargar: ver qué devuelve la API de Cocos
+  (async () => {
+    console.log('[DEBUG] Llamando /api/cocos/debug...');
+    const d = await api('GET', '/cocos/debug?ticker=GGAL');
+    console.log('[DEBUG] Cocos API debug result:');
+    for (const [k,v] of Object.entries(d||{})) {
+      if (v?.ERROR) console.error(`  ${k}: ERROR →`, v.ERROR);
+      else console.log(`  ${k}: OK →`, JSON.stringify(v).substring(0,300));
+    }
+  })();
 });
 </script>
 </body>
