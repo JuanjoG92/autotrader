@@ -205,6 +205,15 @@ async function triggerAnalysis() {
   const btn = document.getElementById('btnAnalyze');
   btn.disabled = true;
   btn.textContent = '🔄 Analizando...';
+  // Guardar config primero para asegurar que enabled=1
+  const cfg = {
+    enabled:           1,
+    auto_execute:      document.getElementById('aiAutoExec').checked ? 1 : 0,
+    max_per_trade_ars: parseFloat(document.getElementById('aiMaxTrade').value),
+    min_confidence:    parseFloat(document.getElementById('aiMinConf').value) / 100,
+    risk_level:        document.getElementById('aiRisk').value,
+  };
+  await api('PUT', '/ai/config', cfg);
   try {
     const r = await api('POST', '/ai/analyze');
     if (r?.error) { alert('Error: ' + r.error); return; }
