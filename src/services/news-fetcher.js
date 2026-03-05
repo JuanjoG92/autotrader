@@ -8,10 +8,12 @@ const FETCH_INTERVAL_MS = 30 * 60 * 1000; // 30 min
 const MAX_AGE_HOURS     = 48;
 
 const RSS_FEEDS = [
-  { name: 'Infobae Economía',   url: 'https://www.infobae.com/feeds/rss/economia/' },
-  { name: 'iProfesional',       url: 'https://www.iprofesional.com/feed' },
-  { name: 'Cronista',           url: 'https://www.cronista.com/rss/finanzas-y-mercados.xml' },
-  { name: 'Ámbito',             url: 'https://www.ambito.com/rss/pages/economia.xml' },
+  { name: 'Reuters Latam',     url: 'https://feeds.reuters.com/reuters/businessNews' },
+  { name: 'Bloomberg EN',      url: 'https://feeds.bloomberg.com/markets/news.rss' },
+  { name: 'Seeking Alpha',     url: 'https://seekingalpha.com/market_currents.xml' },
+  { name: 'Yahoo Finance',     url: 'https://finance.yahoo.com/news/rssindex' },
+  { name: 'Investing.com',     url: 'https://www.investing.com/rss/news.rss' },
+  { name: 'Merval/ArgFinance', url: 'https://www.bolsar.com/Vistas/Publicas/RSSNoticias.aspx' },
 ];
 
 // Palabras clave por sector/ticker para indexar noticias
