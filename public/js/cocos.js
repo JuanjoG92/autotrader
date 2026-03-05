@@ -8,15 +8,31 @@ let _ws = null;
 const h = () => ({ 'Content-Type': 'application/json', 'Authorization': `Bearer ${_token}` });
 
 async function api(method, path, body) {
-  const res = await fetch(`${API}${path}`, { method, headers: h(), body: body ? JSON.stringify(body) : undefined });
-  if (res.status === 401) { location.href = '/login'; return; }
-  return res.json();
+  try {
+    const res = await fetch(`${API}${path}`, { method, headers: h(), body: body ? JSON.stringify(body) : undefined });
+    if (res.status === 401) {
+      console.warn('[Cocos] 401 en', path, '- verificando token...');
+      // Solo redirigir si falla el endpoint principal de auth
+      if (path === '/cocos/status') { location.href = '/login'; return; }
+      return { error: 'No autorizado' };
+    }
+    const text = await res.text();
+    try { return JSON.parse(text); } catch { return { error: text.substring(0, 100) }; }
+  } catch(e) {
+    console.error('[Cocos] Error fetch:', path, e.message);
+    return { error: e.message };
+  }
 }
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', async () => {
   if (!_token) { location.href = '/login'; return; }
-  await Promise.all([loadStatus(), loadMarketPrices(), loadPortfolio(), loadBuyingPower(), loadSignals(), loadAIConfig()]);
+  loadStatus();
+  loadMarketPrices();
+  loadPortfolio();
+  loadBuyingPower();
+  loadSignals();
+  loadAIConfig();
   connectWS();
   setInterval(loadMarketPrices, 30000);
   setInterval(loadSignals, 60000);
