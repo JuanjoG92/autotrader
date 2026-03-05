@@ -8,6 +8,7 @@ const aiTrader = require('../services/ai-trader');
 const market   = require('../services/market-monitor');
 const news     = require('../services/news-fetcher');
 const cocos    = require('../services/cocos');
+const autoInv  = require('../services/auto-investor');
 
 const OWNER_ID = parseInt(process.env.COCOS_OWNER_USER_ID || '1');
 function ownerOnly(req, res, next) {
@@ -42,6 +43,18 @@ router.post('/analyze', auth, ownerOnly, async (req, res) => {
     if (!cfg.enabled) aiTrader.updateConfig({ enabled: 1 });
     const result = await aiTrader.runAnalysis();
     res.json(result || { signals: [], analysis: 'Sin análisis disponible' });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/ai/analyze-ticker   — análisis individual de un ticker
+router.post('/analyze-ticker', auth, ownerOnly, async (req, res) => {
+  try {
+    const { ticker } = req.body;
+    if (!ticker) return res.status(400).json({ error: 'ticker requerido' });
+    const result = await aiTrader.runTickerAnalysis(ticker);
+    res.json(result || { error: 'Sin resultado' });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -139,6 +152,49 @@ router.post('/news/fetch', auth, ownerOnly, async (req, res) => {
   try {
     const count = await news.fetchAllFeeds();
     res.json({ ok: true, fetched: count });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Auto-Investor ─────────────────────────────────────────────────────────────
+
+// GET /api/ai/auto-invest/config
+router.get('/auto-invest/config', auth, ownerOnly, (req, res) => {
+  res.json(autoInv.getAutoConfig());
+});
+
+// PUT /api/ai/auto-invest/config
+router.put('/auto-invest/config', auth, ownerOnly, (req, res) => {
+  const allowed = ['enabled','monitor_enabled','invest_pct','min_invest_ars','stop_loss_pct','take_profit_pct','allow_high_risk','num_positions'];
+  const changes = {};
+  for (const k of allowed) { if (req.body[k] !== undefined) changes[k] = req.body[k]; }
+  if (!Object.keys(changes).length) return res.status(400).json({ error: 'Nada que actualizar' });
+  res.json(autoInv.updateAutoConfig(changes));
+});
+
+// POST /api/ai/auto-invest/execute  — forzar inversión ahora
+router.post('/auto-invest/execute', auth, ownerOnly, async (req, res) => {
+  try {
+    const result = await autoInv.forceInvest();
+    res.json(result || { ok: false, message: 'No se pudo invertir (mercado cerrado o sin capital)' });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /api/ai/auto-invest/positions  — posiciones activas
+router.get('/auto-invest/positions', auth, ownerOnly, (req, res) => {
+  res.json(autoInv.getActivePositions());
+});
+
+// GET /api/ai/auto-invest/history  — historial completo
+router.get('/auto-invest/history', auth, ownerOnly, (req, res) => {
+  const limit = parseInt(req.query.limit) || 50;
+  res.json(autoInv.getInvestmentHistory(limit));
+});
+
+// POST /api/ai/auto-invest/monitor  — forzar monitoreo ahora
+router.post('/auto-invest/monitor', auth, ownerOnly, async (req, res) => {
+  try {
+    await autoInv.monitorPositions();
+    res.json({ ok: true, positions: autoInv.getActivePositions().length });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

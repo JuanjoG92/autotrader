@@ -18,6 +18,7 @@ const cocos        = require('./src/services/cocos');
 const marketMonitor= require('./src/services/market-monitor');
 const aiTrader     = require('./src/services/ai-trader');
 const newsFetcher  = require('./src/services/news-fetcher');
+const autoInvestor = require('./src/services/auto-investor');
 
 const app = express();
 const server = http.createServer(app);
@@ -75,6 +76,7 @@ cocos.init().catch(e => console.error('[Cocos] Init error:', e.message));
 marketMonitor.init(broadcast);
 aiTrader.init(broadcast);
 newsFetcher.init();
+autoInvestor.init(broadcast);
 
 server.listen(PORT, () => {
   console.log(`AutoTrader running on port ${PORT}`);

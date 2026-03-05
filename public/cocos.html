@@ -382,7 +382,8 @@ async function api(method, path, body) {
 // ── Filters ───────────────────────────────────────────────────────────────────
 
 const CEDEARS = new Set(['AAPL','MSFT','GOOGL','NVDA','META','AMZN','TSLA','XOM','CVX','MELI',
-  'AMD','NFLX','DIS','PYPL','BABA','BA','KO','JPM','WMT','INTC','UBER','SNAP','SHOP','HOOD','BIOX','GLOB','JMIA','MU']);
+  'AMD','NFLX','DIS','PYPL','BABA','BA','KO','JPM','WMT','INTC','UBER','SNAP','SHOP','HOOD','BIOX','GLOB','JMIA','MU',
+  'OXY','XLE','SMCI','PLTR','SPY','QQQ','SMH','GLD']);
 
 function setFilter(f) {
   _filter = f;
@@ -591,34 +592,39 @@ async function analyzeOne(ticker, price) {
   _modalTicker = ticker;
   _modalPrice  = price;
   document.getElementById('modalTicker').textContent = ticker;
-  document.getElementById('modalContent').innerHTML = '<i class="fas fa-spinner fa-spin"></i> Consultando IA...';
+  document.getElementById('modalContent').innerHTML = '<i class="fas fa-spinner fa-spin"></i> Analizando ' + ticker + ' con IA...';
   document.getElementById('analyzeModal').classList.add('open');
 
-  // Guardar config con enabled=1 y disparar análisis
-  await api('PUT', '/ai/config', { enabled: 1 });
-  const r = await api('POST', '/ai/analyze');
+  // Llamar análisis específico del ticker
+  const r = await api('POST', '/ai/analyze-ticker', { ticker });
   if (!r || r.error) {
     document.getElementById('modalContent').innerHTML = `<span style="color:var(--red)">Error: ${r?.error||'desconocido'}</span>`;
     return;
   }
 
-  const sig = (r.signals || []).find(s => s.ticker === ticker);
-  let html = `<div style="margin-bottom:.75rem;padding:.6rem;background:#0f172a;border-radius:8px;font-size:.82rem">${r.analysis||'Sin análisis'}</div>`;
-  if (sig) {
-    const cls = sig.action==='BUY'?'price-up':'price-down';
-    html += `<div style="margin-bottom:.5rem">
-      <strong>Señal para ${ticker}:</strong>
-      <span class="${cls}" style="font-weight:700"> ${sig.action}</span> — Confianza: ${(sig.confidence*100).toFixed(0)}%<br>
-      <em style="font-size:.78rem;color:var(--muted)">${sig.reason||''}</em>
-    </div>`;
-    if (sig.price) {
-      document.getElementById('modalBuyBtn').textContent  = `▲ Comprar @ $${sig.price.toLocaleString('es-AR')}`;
-      document.getElementById('modalSellBtn').textContent = `▼ Vender @ $${sig.price.toLocaleString('es-AR')}`;
-      _modalPrice = sig.price;
-      quickFill(ticker, sig.price);
-    }
-  } else {
-    html += `<div style="color:var(--muted);font-size:.8rem">No hay señal específica para ${ticker} en este análisis.</div>`;
+  const action = r.action || 'HOLD';
+  const conf   = ((r.confidence || 0) * 100).toFixed(0);
+  const cls    = action === 'BUY' ? 'price-up' : action === 'SELL' ? 'price-down' : 'price-neutral';
+  const riskColors = { LOW: 'var(--green)', MEDIUM: 'var(--amber)', HIGH: 'var(--red)' };
+
+  let html = `<div style="margin-bottom:.75rem;padding:.6rem;background:#0f172a;border-radius:8px;font-size:.82rem;line-height:1.6">${r.analysis || 'Sin análisis'}</div>`;
+  html += `<div style="margin-bottom:.5rem">
+    <strong>Señal para ${ticker}:</strong>
+    <span class="${cls}" style="font-weight:700;font-size:1rem"> ${action}</span>
+    — Confianza: <strong>${conf}%</strong><br>
+    <em style="font-size:.78rem;color:var(--muted)">${r.reason || ''}</em>
+  </div>`;
+  if (r.news_impact) {
+    html += `<div style="font-size:.75rem;color:#94a3b8;margin-bottom:.4rem"><i class="fas fa-newspaper" style="color:var(--purple)"></i> ${r.news_impact}</div>`;
+  }
+  if (r.risk_level) {
+    html += `<div style="font-size:.75rem;margin-bottom:.4rem">Riesgo: <span style="color:${riskColors[r.risk_level]||'var(--muted)'}; font-weight:600">${r.risk_level}</span></div>`;
+  }
+  if (r.price && r.price > 0) {
+    document.getElementById('modalBuyBtn').textContent  = `▲ Comprar @ $${r.price.toLocaleString('es-AR')}`;
+    document.getElementById('modalSellBtn').textContent = `▼ Vender @ $${r.price.toLocaleString('es-AR')}`;
+    _modalPrice = r.price;
+    quickFill(ticker, r.price);
   }
   document.getElementById('modalContent').innerHTML = html;
   loadSignals();

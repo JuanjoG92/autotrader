@@ -177,6 +177,37 @@ function initDB() {
       FOREIGN KEY (doc_id) REFERENCES rag_documents(id) ON DELETE CASCADE
     );
     CREATE INDEX IF NOT EXISTS idx_chunks_doc ON rag_chunks(doc_id);
+
+    CREATE TABLE IF NOT EXISTS auto_invest_config (
+      id INTEGER PRIMARY KEY DEFAULT 1,
+      enabled INTEGER DEFAULT 1,
+      monitor_enabled INTEGER DEFAULT 1,
+      invest_pct INTEGER DEFAULT 90,
+      min_invest_ars REAL DEFAULT 10000,
+      stop_loss_pct REAL DEFAULT 5.0,
+      take_profit_pct REAL DEFAULT 10.0,
+      allow_high_risk INTEGER DEFAULT 0,
+      num_positions INTEGER DEFAULT 3,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS auto_investments (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      ticker TEXT NOT NULL,
+      action TEXT NOT NULL,
+      quantity INTEGER NOT NULL DEFAULT 0,
+      price REAL NOT NULL DEFAULT 0,
+      total_ars REAL NOT NULL DEFAULT 0,
+      order_id TEXT DEFAULT '',
+      status TEXT DEFAULT 'PENDING',
+      stop_loss_price REAL DEFAULT 0,
+      take_profit_price REAL DEFAULT 0,
+      reason TEXT DEFAULT '',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      executed_at DATETIME DEFAULT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_auto_inv_ticker ON auto_investments(ticker);
+    CREATE INDEX IF NOT EXISTS idx_auto_inv_status ON auto_investments(status);
   `);
 
   console.log('Database initialized');

@@ -13,14 +13,15 @@ const ANALYSIS_MS  = 5 * 60 * 1000;
 const OPENAI_MODEL = 'gpt-4o-mini';
 
 const ALL_SECTORS = {
-  'Energia/Petroleo': ['YPFD', 'PAMP', 'TGNO4', 'TGSU2', 'CEPU', 'XOM', 'CVX'],
+  'Energia/Petroleo': ['YPFD', 'PAMP', 'TGNO4', 'TGSU2', 'CEPU', 'XOM', 'CVX', 'OXY', 'VIST', 'XLE'],
   'Bancos/Finanzas':  ['GGAL', 'BBAR', 'BMA', 'SUPV'],
   'Materiales':       ['ALUA', 'LOMA', 'TXAR'],
-  'Tech Global':      ['AAPL', 'MSFT', 'GOOGL', 'NVDA', 'META', 'AMZN', 'TSLA'],
-  'Latam/Otros':      ['MELI', 'TECO2'],
+  'Tech Global':      ['AAPL', 'MSFT', 'GOOGL', 'NVDA', 'META', 'AMZN', 'TSLA', 'AMD', 'SMCI', 'PLTR'],
+  'ETF':              ['SPY', 'QQQ', 'SMH', 'GLD'],
+  'Latam/Otros':      ['MELI', 'TECO2', 'GLOB'],
 };
 
-const CEDEARS  = new Set(['AAPL','MSFT','GOOGL','NVDA','META','AMZN','TSLA','XOM','CVX','MELI']);
+const CEDEARS  = new Set(['AAPL','MSFT','GOOGL','NVDA','META','AMZN','TSLA','XOM','CVX','MELI','OXY','VIST','XLE','SMCI','PLTR','SPY','QQQ','SMH','GLD','AMD']);
 const ACCIONES = new Set(['YPFD','PAMP','TGNO4','TGSU2','CEPU','GGAL','BBAR','BMA','SUPV','ALUA','LOMA','TXAR','TECO2']);
 
 let _analysisTimer = null;
@@ -220,4 +221,113 @@ function init(broadcastFn) {
   console.log('[AI-Trader] Agente iniciado — analisis cada 5 min');
 }
 
-module.exports = { init, runAnalysis, getConfig, updateConfig, getRecentSignals };
+// ── Análisis individual por ticker ────────────────────────────────────────────
+
+async function runTickerAnalysis(ticker) {
+  if (!ticker) throw new Error('Ticker requerido');
+  const upperTicker = ticker.toUpperCase();
+  console.log(`[AI-Trader] Análisis individual: ${upperTicker}`);
+
+  // 1. Datos técnicos del ticker
+  const ind     = market.getIndicators(upperTicker);
+  const latest  = market.getLatestPrice(upperTicker);
+  let quoteData = '';
+  if (ind && ind.price > 0) {
+    const v = latest?.variation || 0;
+    quoteData = `Precio: $${ind.price.toFixed(2)} | Var: ${v>=0?'+':''}${v.toFixed(2)}% | RSI: ${ind.rsi??'N/D'} | SMA20: ${ind.sma20?'$'+ind.sma20.toFixed(0):'N/D'} | SMA50: ${ind.sma50?'$'+ind.sma50.toFixed(0):'N/D'} | Tend5: ${ind.trend5}% | DataPoints: ${ind.dataPoints}`;
+  }
+
+  // 2. Si no hay datos locales, intentar obtener de Cocos directo
+  let livePrice = ind?.price || 0;
+  if (!quoteData || livePrice <= 0) {
+    try {
+      const quote = await cocos.getQuote(upperTicker, 'C');
+      livePrice = quote?.last_price || quote?.close_price || quote?.previous_close_price || 0;
+      const liveVar = quote?.variation || quote?.daily_variation || 0;
+      if (livePrice > 0) {
+        quoteData = `Precio actual: $${livePrice.toFixed(2)} | Var: ${liveVar>=0?'+':''}${(liveVar*100).toFixed(2)}% (datos en vivo de Cocos)`;
+      }
+    } catch {}
+  }
+  if (!quoteData) quoteData = 'Sin datos de precio disponibles (mercado posiblemente cerrado).';
+
+  // 3. Noticias específicas del ticker
+  const newsItems = news.getNewsForTickers([upperTicker], 10);
+  const newsCtx   = newsItems.length
+    ? newsItems.map(n => `- [${n.source}] ${n.title}`).join('\n')
+    : 'Sin noticias recientes para este instrumento.';
+
+  // 4. RAG
+  const ragCtx = await rag.buildRAGContext(`${upperTicker} inversion rendimiento riesgo acciones cedear`);
+
+  // 5. Contexto de mercado general (otros tickers para comparar)
+  const allTickers = Object.values(ALL_SECTORS).flat();
+  const marketLines = [];
+  for (const t of allTickers.slice(0, 10)) {
+    const ti = market.getIndicators(t);
+    if (ti && ti.price > 0) {
+      marketLines.push(`  ${t}: $${ti.price.toFixed(0)} RSI:${ti.rsi??'-'} Tend5:${ti.trend5}%`);
+    }
+  }
+
+  // 6. Config
+  const cfg = getConfig();
+
+  const prompt = `ANÁLISIS INDIVIDUAL DE INVERSIÓN — ${upperTicker}
+
+Eres un analista financiero experto. Debes analizar ESPECÍFICAMENTE el instrumento ${upperTicker} y dar una recomendación CLARA: BUY, SELL o HOLD.
+
+DATOS DEL INSTRUMENTO ${upperTicker}:
+${quoteData}
+
+NOTICIAS RELEVANTES PARA ${upperTicker}:
+${newsCtx}
+
+CONTEXTO GENERAL DEL MERCADO (referencia):
+${marketLines.join('\n') || 'Sin datos de otros instrumentos.'}
+${ragCtx ? `\nCONOCIMIENTO DEL USUARIO:\n${ragCtx}` : ''}
+
+CONFIGURACIÓN: Max/operación: ARS $${cfg.max_per_trade_ars} | Riesgo: ${cfg.risk_level} | Stop-loss: ${cfg.stop_loss_pct||5}%
+
+INSTRUCCIONES:
+1. Analiza ESPECÍFICAMENTE ${upperTicker} — NO ignores este ticker
+2. Evalúa: tendencia de precio, RSI, noticias, sector, contexto macro
+3. Si no hay datos técnicos suficientes, basa tu análisis en noticias y conocimiento general del activo
+4. Da una recomendación CLARA: BUY, SELL o HOLD
+5. Explica el por qué en 2-3 oraciones claras
+6. Si recomiendas BUY: sugiere precio y cantidad (quantity = floor(max_trade / precio))
+7. Sé específico y directo, NO digas "sin datos suficientes" — analiza con lo que hay
+
+RESPONDE SOLO JSON:
+{
+  "ticker": "${upperTicker}",
+  "action": "BUY|SELL|HOLD",
+  "confidence": 0.75,
+  "price": 0,
+  "quantity": 0,
+  "reason": "Explicación clara de por qué esta recomendación",
+  "analysis": "Análisis detallado de 2-3 oraciones sobre ${upperTicker}",
+  "sector_outlook": "Perspectiva del sector",
+  "risk_level": "LOW|MEDIUM|HIGH",
+  "news_impact": "Impacto de noticias en la decisión"
+}`;
+
+  const result = await callOpenAI(prompt);
+
+  // Guardar señal
+  if (result.ticker && result.action) {
+    saveSignal({
+      ticker: result.ticker, action: result.action,
+      confidence: result.confidence || 0.5,
+      price: result.price || livePrice,
+      quantity: result.quantity || 0,
+      reason: result.reason || '',
+      analysis: result.analysis || '',
+    });
+  }
+
+  console.log(`[AI-Trader] ${upperTicker}: ${result.action} (${((result.confidence||0)*100).toFixed(0)}%)`);
+  return result;
+}
+
+module.exports = { init, runAnalysis, runTickerAnalysis, getConfig, updateConfig, getRecentSignals };

@@ -60,8 +60,19 @@ const DEFAULT_WATCHLIST = [
   // ── CEDEARs Energía ──
   { ticker: 'XOM',   instrument_type: 'CEDEARS',  segment: 'C', currency: 'ARS' },
   { ticker: 'CVX',   instrument_type: 'CEDEARS',  segment: 'C', currency: 'ARS' },
+  { ticker: 'OXY',   instrument_type: 'CEDEARS',  segment: 'C', currency: 'ARS' },
+  { ticker: 'XLE',   instrument_type: 'CEDEARS',  segment: 'C', currency: 'ARS' },
+  { ticker: 'VIST',  instrument_type: 'ACCIONES',  segment: 'C', currency: 'ARS' },
   // ── CEDEARs Latam ──
   { ticker: 'MELI',  instrument_type: 'CEDEARS',  segment: 'C', currency: 'ARS' },
+  // ── CEDEARs IA / Semiconductores ──
+  { ticker: 'SMCI',  instrument_type: 'CEDEARS',  segment: 'C', currency: 'ARS' },
+  { ticker: 'PLTR',  instrument_type: 'CEDEARS',  segment: 'C', currency: 'ARS' },
+  // ── ETFs ──
+  { ticker: 'SPY',   instrument_type: 'CEDEARS',  segment: 'C', currency: 'ARS' },
+  { ticker: 'QQQ',   instrument_type: 'CEDEARS',  segment: 'C', currency: 'ARS' },
+  { ticker: 'SMH',   instrument_type: 'CEDEARS',  segment: 'C', currency: 'ARS' },
+  { ticker: 'GLD',   instrument_type: 'CEDEARS',  segment: 'C', currency: 'ARS' },
 ];
 
 // ── DB helpers ────────────────────────────────────────────────────────────────
