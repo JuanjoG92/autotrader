@@ -202,16 +202,18 @@ async function pollOnce() {
   }
 
   // ── Estrategia 2: quote individual por ticker (fallback) ──
+  let debugLogged = false;
   for (const item of watchlist) {
     try {
       const longTicker = `${item.ticker}-0002-${item.segment}-CT-${item.currency}`;
       const quote = await cocos.getQuote(longTicker, item.segment);
+      if (!debugLogged) { console.log('[Market] Quote sample:', JSON.stringify(quote).substring(0, 400)); debugLogged = true; }
       const { price, variation, volume, open, high, low } = parseItem(quote || {});
       if (price > 0) {
         savePrice(item.ticker, price, variation, volume, open, high, low);
         results.push({ ticker: item.ticker, price, variation, volume, indicators: getIndicators(item.ticker) });
       }
-    } catch {}
+    } catch (e) { if (!debugLogged) { console.error('[Market] Quote error:', e.message); debugLogged = true; } }
     await new Promise(r => setTimeout(r, 200));
   }
 
