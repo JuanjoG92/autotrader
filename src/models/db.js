@@ -86,6 +86,56 @@ function initDB() {
       expires_at INTEGER NOT NULL DEFAULT 0,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
+
+    CREATE TABLE IF NOT EXISTS watchlist (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      ticker TEXT UNIQUE NOT NULL,
+      instrument_type TEXT DEFAULT 'ACCIONES',
+      segment TEXT DEFAULT 'C',
+      currency TEXT DEFAULT 'ARS',
+      active INTEGER DEFAULT 1,
+      added_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS market_prices (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      ticker TEXT NOT NULL,
+      price REAL NOT NULL,
+      variation REAL DEFAULT 0,
+      volume REAL DEFAULT 0,
+      open_price REAL DEFAULT 0,
+      high_price REAL DEFAULT 0,
+      low_price REAL DEFAULT 0,
+      timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS ai_signals (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      ticker TEXT NOT NULL,
+      action TEXT NOT NULL,
+      confidence REAL NOT NULL,
+      price REAL,
+      quantity INTEGER DEFAULT 0,
+      reason TEXT,
+      executed INTEGER DEFAULT 0,
+      order_id TEXT DEFAULT NULL,
+      analysis TEXT DEFAULT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS ai_config (
+      id INTEGER PRIMARY KEY DEFAULT 1,
+      enabled INTEGER DEFAULT 0,
+      auto_execute INTEGER DEFAULT 0,
+      max_per_trade_ars REAL DEFAULT 50000,
+      min_confidence REAL DEFAULT 0.75,
+      risk_level TEXT DEFAULT 'medium',
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_prices_ticker ON market_prices(ticker);
+    CREATE INDEX IF NOT EXISTS idx_prices_time ON market_prices(timestamp);
+    CREATE INDEX IF NOT EXISTS idx_signals_ticker ON ai_signals(ticker);
   `);
 
   console.log('Database initialized');

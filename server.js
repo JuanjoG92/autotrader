@@ -11,8 +11,11 @@ const tradingRoutes = require('./src/routes/trading');
 const userRoutes = require('./src/routes/user');
 const webhookRoutes = require('./src/routes/webhook');
 const { startAllActiveBots, priceStream } = require('./src/services/bot');
-const cocosRoutes = require('./src/routes/cocos');
-const cocos       = require('./src/services/cocos');
+const cocosRoutes  = require('./src/routes/cocos');
+const aiRoutes     = require('./src/routes/ai');
+const cocos        = require('./src/services/cocos');
+const marketMonitor= require('./src/services/market-monitor');
+const aiTrader     = require('./src/services/ai-trader');
 
 const app = express();
 const server = http.createServer(app);
@@ -30,9 +33,11 @@ app.use('/api/trading', tradingRoutes);
 app.use('/api/user', userRoutes);
 app.use('/api/webhook', webhookRoutes);
 app.use('/api/cocos',   cocosRoutes);
+app.use('/api/ai',      aiRoutes);
 
 // ── SPA fallback ──
 app.get('/dashboard', (req, res) => res.sendFile(path.join(__dirname, 'public', 'dashboard.html')));
+app.get('/cocos',     (req, res) => res.sendFile(path.join(__dirname, 'public', 'cocos.html')));
 app.get('/login', (req, res) => res.sendFile(path.join(__dirname, 'public', 'login.html')));
 app.get('/register', (req, res) => res.sendFile(path.join(__dirname, 'public', 'register.html')));
 
@@ -63,6 +68,8 @@ const PORT = process.env.PORT || 3800;
 
 initDB();
 cocos.init().catch(e => console.error('[Cocos] Init error:', e.message));
+marketMonitor.init(broadcast);
+aiTrader.init(broadcast);
 
 server.listen(PORT, () => {
   console.log(`AutoTrader running on port ${PORT}`);
