@@ -97,8 +97,16 @@ router.get('/list', auth, requireReady, async (req, res) => {
 
 // GET /api/cocos/portfolio
 router.get('/portfolio', auth, ownerOnly, requireReady, async (req, res) => {
-  try { res.json(await cocos.getPortfolio()); }
-  catch (e) { res.status(e.status || 500).json({ error: e.message }); }
+  try {
+    const data = await cocos.getPortfolio();
+    res.json(data);
+  } catch (e) {
+    // Cocos devuelve 404 cuando el portfolio está vacío
+    if (e.status === 404 || e.message?.includes('404') || e.message?.includes('Not Found')) {
+      return res.json({ positions: [], total_value: 0, empty: true });
+    }
+    res.status(e.status || 500).json({ error: e.message });
+  }
 });
 
 // GET /api/cocos/buying-power

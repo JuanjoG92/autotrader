@@ -404,16 +404,19 @@ function renderTable() {
   const sig = _lastSignals;
 
   if (!data.length) {
-    tbody.innerHTML = `<tr class="loading-row"><td colspan="8" style="color:var(--muted)">Sin datos — mercado cerrado o esperando primera actualización...</td></tr>`;
+    tbody.innerHTML = `<tr class="loading-row"><td colspan="8"><i class="fas fa-spinner fa-spin"></i> Cargando instrumentos...</td></tr>`;
     return;
   }
 
   tbody.innerHTML = data.map(item => {
     const v = parseFloat(item.variation) || 0;
-    const vCls = v > 0 ? 'var-up' : v < 0 ? 'var-down' : '';
-    const vTxt = (v >= 0 ? '+' : '') + v.toFixed(2) + '%';
-    const vIcon = v > 0 ? '▲' : v < 0 ? '▼' : '—';
     const price = parseFloat(item.price) || 0;
+    const vCls = v > 0 ? 'var-up' : v < 0 ? 'var-down' : '';
+    const vTxt = price > 0 ? (v >= 0 ? '+' : '') + v.toFixed(2) + '%' : '—';
+    const vIcon = v > 0 ? '▲' : v < 0 ? '▼' : '—';
+    const priceStr = price > 0
+      ? '$' + price.toLocaleString('es-AR', { minimumFractionDigits: 2 })
+      : '<span style="color:var(--muted)">Cerrado</span>';
     const ind = item.indicators || {};
     const rsi = ind.rsi;
     let rsiCls = 'rsi-neutral', rsiTxt = rsi ? rsi.toFixed(0) : '-';
@@ -430,15 +433,15 @@ function renderTable() {
     }
     return `<tr class="clickable" onclick="quickFill('${item.ticker}',${price})">
       <td><div style="display:flex;align-items:center;gap:.4rem"><span class="ticker-name">${item.ticker}</span>${type}</div></td>
-      <td class="${v>0?'price-up':v<0?'price-down':''}" style="font-weight:600">$${price.toLocaleString('es-AR',{minimumFractionDigits:2})}</td>
-      <td><span class="var-badge ${vCls}">${vIcon} ${vTxt}</span></td>
+      <td class="${price>0?(v>0?'price-up':v<0?'price-down':''):'price-neutral'}" style="font-weight:600">${priceStr}</td>
+      <td>${price > 0 ? `<span class="var-badge ${vCls}">${vIcon} ${vTxt}</span>` : '<span style="color:var(--muted);font-size:.72rem">M. Cerrado</span>'}</td>
       <td><span class="rsi-chip ${rsiCls}">${rsiTxt}</span></td>
       <td style="color:var(--muted)">${sma20}</td>
       <td class="${tendCls}">${tend}</td>
       <td>${sigBadge}</td>
       <td style="text-align:right">
         <div class="action-btns" style="justify-content:flex-end">
-          <button class="btn btn-sm btn-primary" onclick="event.stopPropagation();analyzeOne('${item.ticker}',${price})"><i class="fas fa-brain"></i> Analizar IA</button>
+          <button class="btn btn-sm btn-primary" onclick="event.stopPropagation();analyzeOne('${item.ticker}',${price})"><i class="fas fa-brain"></i> IA</button>
           <button class="btn btn-sm btn-green" onclick="event.stopPropagation();quickFill('${item.ticker}',${price});scrollToOrder()"><i class="fas fa-bolt"></i> Invertir</button>
         </div>
       </td>

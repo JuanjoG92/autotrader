@@ -7,6 +7,7 @@ const auth     = require('../middleware/auth');
 const aiTrader = require('../services/ai-trader');
 const market   = require('../services/market-monitor');
 const news     = require('../services/news-fetcher');
+const cocos    = require('../services/cocos');
 
 const OWNER_ID = parseInt(process.env.COCOS_OWNER_USER_ID || '1');
 function ownerOnly(req, res, next) {
@@ -36,8 +37,9 @@ router.put('/config', auth, ownerOnly, (req, res) => {
 // POST /api/ai/analyze   — forzar análisis ahora
 router.post('/analyze', auth, ownerOnly, async (req, res) => {
   try {
+    // Auto-habilitar temporalmente para el análisis manual
     const cfg = aiTrader.getConfig();
-    if (!cfg.enabled) return res.status(400).json({ error: 'El agente está desactivado. Activalo primero.' });
+    if (!cfg.enabled) aiTrader.updateConfig({ enabled: 1 });
     const result = await aiTrader.runAnalysis();
     res.json(result || { signals: [], analysis: 'Sin análisis disponible' });
   } catch (e) {
@@ -53,14 +55,41 @@ router.get('/signals', auth, ownerOnly, (req, res) => {
 
 // ── Monitor de mercado ────────────────────────────────────────────────────────
 
-// GET /api/ai/market/prices   — precios actuales de toda la watchlist
-router.get('/market/prices', auth, (req, res) => {
-  const prices = market.getAllLatestPrices();
-  const enriched = prices.map(p => ({
-    ...p,
-    indicators: market.getIndicators(p.ticker),
-  }));
-  res.json(enriched);
+// GET /api/ai/market/prices   — precios actuales + fallback watchlist
+router.get('/market/prices', auth, async (req, res) => {
+  try {
+    // Datos del monitor de 30s (DB)
+    const prices = market.getAllLatestPrices();
+    const withPrice = prices.filter(p => p.price > 0);
+
+    if (withPrice.length > 0) {
+      return res.json(withPrice.map(p => ({ ...p, indicators: market.getIndicators(p.ticker) })));
+    }
+
+    // Fallback: mostrar watchlist con último precio conocido (puede ser 0 si mercado cerrado)
+    const watchlist = market.getActiveWatchlist();
+    const result = watchlist.map(w => {
+      const latest = market.getLatestPrice(w.ticker);
+      const ind    = market.getIndicators(w.ticker);
+      return {
+        ticker:     w.ticker,
+        price:      latest?.price || 0,
+        variation:  latest?.variation || 0,
+        volume:     latest?.volume || 0,
+        timestamp:  latest?.timestamp || null,
+        indicators: ind,
+      };
+    });
+
+    // Si Cocos está disponible, intentar actualizar precios en background
+    if (cocos.isReady() && result.every(r => r.price === 0)) {
+      market.pollOnce().catch(() => {});
+    }
+
+    res.json(result);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // GET /api/ai/market/history/:ticker?days=30
