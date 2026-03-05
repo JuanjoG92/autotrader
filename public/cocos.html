@@ -412,7 +412,7 @@ function renderTable() {
 
   tbody.innerHTML = data.map(item => {
     const vRaw = parseFloat(item.variation) || 0;
-    const v = Math.abs(vRaw) < 1 ? vRaw * 100 : vRaw; // API devuelve decimal (0.005=0.5%)
+    const v = vRaw * 100; // API Cocos devuelve decimal siempre (0.04 = 4%)
     const price = parseFloat(item.price) || 0;
     const vCls = v > 0 ? 'var-up' : v < 0 ? 'var-down' : '';
     const vTxt = price > 0 ? (v >= 0 ? '+' : '') + v.toFixed(2) + '%' : '—';
