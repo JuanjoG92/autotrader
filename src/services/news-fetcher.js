@@ -8,12 +8,11 @@ const FETCH_INTERVAL_MS = 30 * 60 * 1000; // 30 min
 const MAX_AGE_HOURS     = 48;
 
 const RSS_FEEDS = [
-  { name: 'Reuters Latam',     url: 'https://feeds.reuters.com/reuters/businessNews' },
-  { name: 'Bloomberg EN',      url: 'https://feeds.bloomberg.com/markets/news.rss' },
-  { name: 'Seeking Alpha',     url: 'https://seekingalpha.com/market_currents.xml' },
-  { name: 'Yahoo Finance',     url: 'https://finance.yahoo.com/news/rssindex' },
-  { name: 'Investing.com',     url: 'https://www.investing.com/rss/news.rss' },
-  { name: 'Merval/ArgFinance', url: 'https://www.bolsar.com/Vistas/Publicas/RSSNoticias.aspx' },
+  { name: 'Google Finanzas AR',  url: 'https://news.google.com/rss/search?q=bolsa+argentina+merval+acciones&hl=es-419&gl=AR&ceid=AR:es-419' },
+  { name: 'Google YPF/GGAL',    url: 'https://news.google.com/rss/search?q=YPF+Galicia+Pampa+acciones+BYMA&hl=es-419&gl=AR&ceid=AR:es-419' },
+  { name: 'Google CEDEARs',      url: 'https://news.google.com/rss/search?q=cedear+apple+nvidia+microsoft+tesla&hl=es-419&gl=AR&ceid=AR:es-419' },
+  { name: 'Google Economia AR',  url: 'https://news.google.com/rss/search?q=economia+argentina+dolar+inflacion+BCRA&hl=es-419&gl=AR&ceid=AR:es-419' },
+  { name: 'Bolsar',              url: 'https://www.bolsar.com/Vistas/Publicas/RSSNoticias.aspx' },
 ];
 
 // Palabras clave por sector/ticker para indexar noticias
