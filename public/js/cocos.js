@@ -1,20 +1,27 @@
 // public/js/cocos.js — Panel Cocos Capital + AI Trader
 
 const API = '/api';
-let _token = localStorage.getItem('at_token') || '';
+let _token = localStorage.getItem('at_token') || localStorage.getItem('token') || '';
 let _orderSide = 'BUY';
 let _ws = null;
+
+console.log('[Cocos] Iniciando...', 'token:', _token ? 'PRESENTE (' + _token.substring(0,20) + '...)' : 'AUSENTE');
+console.log('[Cocos] localStorage keys:', Object.keys(localStorage));
 
 const h = () => ({ 'Content-Type': 'application/json', 'Authorization': `Bearer ${_token}` });
 
 async function api(method, path, body) {
   try {
+    console.log('[Cocos] API call:', method, path);
     const res = await fetch(`${API}${path}`, { method, headers: h(), body: body ? JSON.stringify(body) : undefined });
+    console.log('[Cocos] Respuesta:', path, res.status);
     if (res.status === 401) {
-      console.warn('[Cocos] 401 en', path, '- verificando token...');
-      // Solo redirigir si falla el endpoint principal de auth
-      if (path === '/cocos/status') { location.href = '/login'; return; }
-      return { error: 'No autorizado' };
+      console.error('[Cocos] 401 UNAUTHORIZED en', path, '- token inválido o expirado');
+      document.body.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100vh;background:#0f172a;color:#ef4444;font-family:sans-serif;flex-direction:column;gap:1rem">
+        <h2>⚠️ Sesión expirada</h2>
+        <p>Tu token JWT expiró. <a href="/login" style="color:#8b5cf6">Volvé a iniciar sesión</a></p>
+      </div>`;
+      return null;
     }
     const text = await res.text();
     try { return JSON.parse(text); } catch { return { error: text.substring(0, 100) }; }
@@ -26,7 +33,13 @@ async function api(method, path, body) {
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', async () => {
-  if (!_token) { location.href = '/login'; return; }
+  console.log('[Cocos] DOMContentLoaded - token:', !!_token);
+  if (!_token) {
+    console.error('[Cocos] Sin token - redirigiendo a login');
+    location.href = '/login';
+    return;
+  }
+  console.log('[Cocos] Token OK, cargando datos...');
   loadStatus();
   loadMarketPrices();
   loadPortfolio();
