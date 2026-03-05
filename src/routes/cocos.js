@@ -58,6 +58,18 @@ router.post('/admin/tokens', auth, ownerOnly, async (req, res) => {
 
 // ── Mercado (cualquier usuario autenticado) ───────────────────────────────────
 
+// GET /api/cocos/debug — ver respuesta real de la API para un ticker
+router.get('/debug', auth, ownerOnly, async (req, res) => {
+  const ticker = req.query.ticker || 'GGAL';
+  try {
+    const search = await cocos.searchTicker(ticker);
+    const list   = await cocos._callRaw('GET', `api/v1/markets/tickers/?instrument_type=ACCIONES&settlement_days=0002&currency=ARS&segment=C&page=1&size=5`).catch(e => ({ error: e.message }));
+    res.json({ search, list });
+  } catch (e) {
+    res.json({ error: e.message });
+  }
+});
+
 // GET /api/cocos/market
 router.get('/market', auth, requireReady, async (req, res) => {
   try { res.json(await cocos.getMarketStatus()); }

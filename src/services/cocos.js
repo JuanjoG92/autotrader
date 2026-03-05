@@ -165,6 +165,9 @@ function buildLongTicker(ticker, settlement, currency, segment) {
 
 function isReady() { return _ready; }
 
+// Exponer _call para debug
+async function _callRaw(method, path, body) { return _call(method, path, body); }
+
 function getSessionInfo() {
   const now = Math.floor(Date.now() / 1000);
   const minLeft = _session.expiresAt ? Math.round((_session.expiresAt - now) / 60) : 0;
@@ -303,6 +306,7 @@ async function cancelOrder(orderId) {
 module.exports = {
   init,
   isReady,
+  _callRaw,
   getSessionInfo,
   forceRefresh,
   updateTokens,
