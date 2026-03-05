@@ -91,6 +91,7 @@ async function _refresh() {
       'Content-Type':  'application/json',
       'apikey':        ANON_KEY,
       'Authorization': `Bearer ${ANON_KEY}`,
+      'User-Agent':    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
     },
     body: JSON.stringify({ refresh_token: _session.refreshToken }),
   });
