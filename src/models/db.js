@@ -136,6 +136,18 @@ function initDB() {
     CREATE INDEX IF NOT EXISTS idx_prices_ticker ON market_prices(ticker);
     CREATE INDEX IF NOT EXISTS idx_prices_time ON market_prices(timestamp);
     CREATE INDEX IF NOT EXISTS idx_signals_ticker ON ai_signals(ticker);
+
+    CREATE TABLE IF NOT EXISTS news_items (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      title TEXT NOT NULL,
+      summary TEXT DEFAULT '',
+      source TEXT DEFAULT '',
+      url TEXT DEFAULT '',
+      keywords TEXT DEFAULT '',
+      published_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      fetched_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_news_time ON news_items(published_at);
   `);
 
   console.log('Database initialized');

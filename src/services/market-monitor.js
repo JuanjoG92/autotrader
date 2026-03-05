@@ -14,17 +14,36 @@ let _running     = false;
 // ── Watchlist por defecto ─────────────────────────────────────────────────────
 
 const DEFAULT_WATCHLIST = [
-  { ticker: 'GGAL',  instrument_type: 'ACCIONES', segment: 'C', currency: 'ARS' },
+  // ── Energía / Petróleo ──
   { ticker: 'YPFD',  instrument_type: 'ACCIONES', segment: 'C', currency: 'ARS' },
-  { ticker: 'LOMA',  instrument_type: 'ACCIONES', segment: 'C', currency: 'ARS' },
   { ticker: 'PAMP',  instrument_type: 'ACCIONES', segment: 'C', currency: 'ARS' },
-  { ticker: 'TXAR',  instrument_type: 'ACCIONES', segment: 'C', currency: 'ARS' },
+  { ticker: 'TGNO4', instrument_type: 'ACCIONES', segment: 'C', currency: 'ARS' },
+  { ticker: 'TGSU2', instrument_type: 'ACCIONES', segment: 'C', currency: 'ARS' },
+  { ticker: 'CEPU',  instrument_type: 'ACCIONES', segment: 'C', currency: 'ARS' },
+  // ── Bancos / Finanzas ──
+  { ticker: 'GGAL',  instrument_type: 'ACCIONES', segment: 'C', currency: 'ARS' },
   { ticker: 'BBAR',  instrument_type: 'ACCIONES', segment: 'C', currency: 'ARS' },
-  { ticker: 'TECO2', instrument_type: 'ACCIONES', segment: 'C', currency: 'ARS' },
+  { ticker: 'BMA',   instrument_type: 'ACCIONES', segment: 'C', currency: 'ARS' },
+  { ticker: 'SUPV',  instrument_type: 'ACCIONES', segment: 'C', currency: 'ARS' },
+  // ── Materiales / Industria ──
   { ticker: 'ALUA',  instrument_type: 'ACCIONES', segment: 'C', currency: 'ARS' },
-  { ticker: 'MELI',  instrument_type: 'CEDEARS',  segment: 'C', currency: 'ARS' },
-  { ticker: 'AMZN',  instrument_type: 'CEDEARS',  segment: 'C', currency: 'ARS' },
+  { ticker: 'LOMA',  instrument_type: 'ACCIONES', segment: 'C', currency: 'ARS' },
+  { ticker: 'TXAR',  instrument_type: 'ACCIONES', segment: 'C', currency: 'ARS' },
+  // ── Telecom / Tech local ──
+  { ticker: 'TECO2', instrument_type: 'ACCIONES', segment: 'C', currency: 'ARS' },
+  // ── CEDEARs Tecnología ──
   { ticker: 'AAPL',  instrument_type: 'CEDEARS',  segment: 'C', currency: 'ARS' },
+  { ticker: 'MSFT',  instrument_type: 'CEDEARS',  segment: 'C', currency: 'ARS' },
+  { ticker: 'GOOGL', instrument_type: 'CEDEARS',  segment: 'C', currency: 'ARS' },
+  { ticker: 'NVDA',  instrument_type: 'CEDEARS',  segment: 'C', currency: 'ARS' },
+  { ticker: 'META',  instrument_type: 'CEDEARS',  segment: 'C', currency: 'ARS' },
+  { ticker: 'AMZN',  instrument_type: 'CEDEARS',  segment: 'C', currency: 'ARS' },
+  { ticker: 'TSLA',  instrument_type: 'CEDEARS',  segment: 'C', currency: 'ARS' },
+  // ── CEDEARs Energía ──
+  { ticker: 'XOM',   instrument_type: 'CEDEARS',  segment: 'C', currency: 'ARS' },
+  { ticker: 'CVX',   instrument_type: 'CEDEARS',  segment: 'C', currency: 'ARS' },
+  // ── CEDEARs Latam ──
+  { ticker: 'MELI',  instrument_type: 'CEDEARS',  segment: 'C', currency: 'ARS' },
 ];
 
 // ── DB helpers ────────────────────────────────────────────────────────────────

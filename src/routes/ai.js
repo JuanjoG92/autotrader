@@ -6,6 +6,7 @@ const router   = express.Router();
 const auth     = require('../middleware/auth');
 const aiTrader = require('../services/ai-trader');
 const market   = require('../services/market-monitor');
+const news     = require('../services/news-fetcher');
 
 const OWNER_ID = parseInt(process.env.COCOS_OWNER_USER_ID || '1');
 function ownerOnly(req, res, next) {
@@ -97,6 +98,19 @@ router.post('/market/poll', auth, ownerOnly, async (req, res) => {
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
+});
+
+// GET /api/ai/news
+router.get('/news', auth, (req, res) => {
+  res.json(news.getLatestNews(30));
+});
+
+// POST /api/ai/news/fetch
+router.post('/news/fetch', auth, ownerOnly, async (req, res) => {
+  try {
+    const count = await news.fetchAllFeeds();
+    res.json({ ok: true, fetched: count });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 module.exports = router;
