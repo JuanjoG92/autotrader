@@ -12,6 +12,7 @@
     link.addEventListener('click', (e) => {
       e.preventDefault();
       const sec = link.dataset.section;
+      if (!sec) return;
       document.querySelectorAll('.sidebar-link').forEach(l => l.classList.remove('active'));
       link.classList.add('active');
       document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
