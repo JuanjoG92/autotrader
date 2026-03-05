@@ -131,8 +131,13 @@ function getLatestNews(limit) {
 async function fetchFeed(feed) {
   try {
     const res = await fetch(feed.url, {
-      headers: { 'User-Agent': 'Mozilla/5.0 (AutoTrader RSS Reader)', 'Accept': 'application/rss+xml, application/xml, text/xml' },
-      signal: AbortSignal.timeout(8000),
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'application/rss+xml, application/xml, text/xml, */*',
+        'Accept-Language': 'es-AR,es;q=0.9,en;q=0.8',
+        'Cache-Control': 'no-cache',
+      },
+      signal: AbortSignal.timeout(10000),
     });
     if (!res.ok) return 0;
     const xml   = await res.text();
