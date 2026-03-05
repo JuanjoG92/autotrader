@@ -1,5 +1,6 @@
 // src/services/ai-trader.js
 // Agente IA — análisis sectorial + noticias + RAG + filtros configurables
+// v2
 
 const { getDB }          = require('../models/db');
 const { getOpenAIToken } = require('./ai-token');
