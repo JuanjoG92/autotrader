@@ -206,12 +206,15 @@ async function searchTicker(q) {
 }
 
 async function getQuote(ticker, segment) {
-  // La API acepta solo el ticker simple (GGAL, no GGAL-0002-C-CT-ARS)
-  // y devuelve un ARRAY con todos los plazos
+  // La API acepta solo el ticker simple y devuelve ARRAY con todos los plazos/monedas
   const simpleTicker = ticker.includes('-') ? ticker.split('-')[0] : ticker;
   const results = await _call('GET', `api/v1/markets/tickers/${encodeURIComponent(simpleTicker)}?segment=${segment || 'C'}`);
   if (Array.isArray(results)) {
-    return results.find(r => r.long_ticker && r.long_ticker.includes('-0002-')) || results[0] || {};
+    // Prioridad: 24hs (0002) + ARS
+    return results.find(r => r.long_ticker?.includes('-0002-') && r.long_ticker?.endsWith('-ARS'))
+        || results.find(r => r.long_ticker?.endsWith('-ARS'))
+        || results.find(r => r.long_ticker?.includes('-0002-'))
+        || results[0] || {};
   }
   return results;
 }
