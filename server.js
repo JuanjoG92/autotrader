@@ -11,6 +11,8 @@ const tradingRoutes = require('./src/routes/trading');
 const userRoutes = require('./src/routes/user');
 const webhookRoutes = require('./src/routes/webhook');
 const { startAllActiveBots, priceStream } = require('./src/services/bot');
+const cocosRoutes = require('./src/routes/cocos');
+const cocos       = require('./src/services/cocos');
 
 const app = express();
 const server = http.createServer(app);
@@ -27,6 +29,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/trading', tradingRoutes);
 app.use('/api/user', userRoutes);
 app.use('/api/webhook', webhookRoutes);
+app.use('/api/cocos',   cocosRoutes);
 
 // ── SPA fallback ──
 app.get('/dashboard', (req, res) => res.sendFile(path.join(__dirname, 'public', 'dashboard.html')));
@@ -59,6 +62,7 @@ function broadcast(data) {
 const PORT = process.env.PORT || 3800;
 
 initDB();
+cocos.init().catch(e => console.error('[Cocos] Init error:', e.message));
 
 server.listen(PORT, () => {
   console.log(`AutoTrader running on port ${PORT}`);

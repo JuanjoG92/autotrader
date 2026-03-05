@@ -77,6 +77,15 @@ function initDB() {
     CREATE INDEX IF NOT EXISTS idx_trades_user ON trades(user_id);
     CREATE INDEX IF NOT EXISTS idx_bots_user ON bots(user_id);
     CREATE INDEX IF NOT EXISTS idx_apikeys_user ON api_keys(user_id);
+
+    CREATE TABLE IF NOT EXISTS cocos_sessions (
+      id INTEGER PRIMARY KEY DEFAULT 1,
+      access_token_enc TEXT NOT NULL,
+      refresh_token_enc TEXT NOT NULL,
+      account_id INTEGER NOT NULL DEFAULT 0,
+      expires_at INTEGER NOT NULL DEFAULT 0,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
   `);
 
   console.log('Database initialized');
