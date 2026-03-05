@@ -373,10 +373,9 @@ async function api(method, path, body) {
   try {
     const res = await fetch(`${API}${path}`, { method, headers: h(), body: body ? JSON.stringify(body) : undefined });
     if (res.status === 401) { location.href = '/login'; return null; }
-    if (!res.ok) console.warn(`[API] ${method} ${path} → HTTP ${res.status}`);
     const text = await res.text();
     try { return JSON.parse(text); } catch { return { error: text }; }
-  } catch(e) { console.error(`[API] ${method} ${path} FAILED:`, e.message); return { error: e.message }; }
+  } catch(e) { return { error: e.message }; }
 }
 
 // ── Filters ───────────────────────────────────────────────────────────────────
@@ -412,7 +411,8 @@ function renderTable() {
   }
 
   tbody.innerHTML = data.map(item => {
-    const v = parseFloat(item.variation) || 0;
+    const vRaw = parseFloat(item.variation) || 0;
+    const v = Math.abs(vRaw) < 1 ? vRaw * 100 : vRaw; // API devuelve decimal (0.005=0.5%)
     const price = parseFloat(item.price) || 0;
     const vCls = v > 0 ? 'var-up' : v < 0 ? 'var-down' : '';
     const vTxt = price > 0 ? (v >= 0 ? '+' : '') + v.toFixed(2) + '%' : '—';
@@ -436,7 +436,7 @@ function renderTable() {
     }
     return `<tr class="clickable" onclick="quickFill('${item.ticker}',${price})">
       <td><div style="display:flex;align-items:center;gap:.4rem"><span class="ticker-name">${item.ticker}</span>${type}</div></td>
-      <td class="${price>0?(v>0?'price-up':v<0?'price-down':''):'price-neutral'}" style="font-weight:600">${priceStr}</td>
+      <td class="${price>0?(vRaw>0?'price-up':vRaw<0?'price-down':''):'price-neutral'}" style="font-weight:600">${priceStr}</td>
       <td>${price > 0 ? `<span class="var-badge ${vCls}">${vIcon} ${vTxt}</span>` : '<span style="color:var(--muted);font-size:.72rem">M. Cerrado</span>'}</td>
       <td><span class="rsi-chip ${rsiCls}">${rsiTxt}</span></td>
       <td style="color:var(--muted)">${sma20}</td>
@@ -457,25 +457,17 @@ function renderTable() {
 async function forcePoll() {
   const btn = document.getElementById('btnPoll');
   btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>'; btn.disabled = true;
-  console.log('[Cocos] Forzando poll...');
-  const r = await api('POST', '/ai/market/poll');
-  console.log('[Cocos] Poll result:', r);
+  await api('POST', '/ai/market/poll');
   btn.innerHTML = '<i class="fas fa-sync-alt"></i>'; btn.disabled = false;
   await loadMarketPrices();
 }
 
 async function loadMarketPrices() {
   document.getElementById('syncIcon').className = 'fas fa-spinner fa-spin';
-  console.log('[Cocos] GET /api/ai/market/prices...');
   const data = await api('GET', '/ai/market/prices');
   document.getElementById('syncIcon').className = 'fas fa-sync-alt';
-  console.log('[Cocos] market/prices response:', JSON.stringify(data).substring(0, 500));
   if (data && Array.isArray(data)) {
-    const withPrice = data.filter(d => d.price > 0);
-    console.log(`[Cocos] ${data.length} tickers, ${withPrice.length} con precio. Ejemplo:`, data[0]);
     _allPrices = data; renderTable();
-  } else {
-    console.error('[Cocos] Respuesta inesperada:', data);
   }
 }
 
@@ -703,17 +695,6 @@ document.addEventListener('DOMContentLoaded', () => {
   setInterval(loadMarketPrices, 30000);
   setInterval(loadBuyingPower, 60000);
   setInterval(loadSignals, 60000);
-
-  // Debug automático al cargar: ver qué devuelve la API de Cocos
-  (async () => {
-    console.log('[DEBUG] Llamando /api/cocos/debug...');
-    const d = await api('GET', '/cocos/debug?ticker=GGAL');
-    console.log('[DEBUG] Cocos API debug result:');
-    for (const [k,v] of Object.entries(d||{})) {
-      if (v?.ERROR) console.error(`  ${k}: ERROR →`, v.ERROR);
-      else console.log(`  ${k}: OK →`, typeof v === 'object' ? v : JSON.stringify(v).substring(0,500));
-    }
-  })();
 });
 </script>
 </body>
