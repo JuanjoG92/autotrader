@@ -17,10 +17,8 @@ async function api(method, path, body) {
     console.log('[Cocos] Respuesta:', path, res.status);
     if (res.status === 401) {
       console.error('[Cocos] 401 UNAUTHORIZED en', path, '- token inválido o expirado');
-      document.body.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100vh;background:#0f172a;color:#ef4444;font-family:sans-serif;flex-direction:column;gap:1rem">
-        <h2>⚠️ Sesión expirada</h2>
-        <p>Tu token JWT expiró. <a href="/login" style="color:#8b5cf6">Volvé a iniciar sesión</a></p>
-      </div>`;
+      // Redirigir al login de forma estándar en lugar de reemplazar todo el body
+      try { window.location.href = '/login'; } catch (e) { /* fallback silent */ }
       return null;
     }
     const text = await res.text();
