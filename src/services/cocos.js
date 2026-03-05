@@ -206,16 +206,29 @@ async function searchTicker(q) {
 }
 
 async function getQuote(ticker, segment) {
-  return _call('GET', `api/v1/markets/tickers/${encodeURIComponent(ticker)}?segment=${segment || 'C'}`);
+  // Primero intentar con el ticker simple (sin long format)
+  const simpleTicker = ticker.includes('-') ? ticker.split('-')[0] : ticker;
+  try {
+    return await _call('GET', `api/v1/markets/tickers/${encodeURIComponent(simpleTicker)}?segment=${segment || 'C'}&settlement_days=0002&currency=ARS`);
+  } catch {
+    // Fallback con long ticker
+    return await _call('GET', `api/v1/markets/tickers/${encodeURIComponent(ticker)}?segment=${segment || 'C'}`);
+  }
 }
 
 async function getMarketList(type, subtype, settlement, currency, segment, page, size) {
-  const s = SETTLEMENT_MAP[settlement] || '0002';
-  const c = CURRENCY_MAP[currency]     || 'ARS';
+  const s   = SETTLEMENT_MAP[settlement] || '0002';
+  const c   = CURRENCY_MAP[currency]     || 'ARS';
   const seg = segment || 'C';
-  const pg  = page  || 1;
-  const sz  = size  || 50;
-  return _call('GET', `api/v1/markets/tickers/?instrument_type=${type}&instrument_subtype=${subtype}&settlement_days=${s}&currency=${c}&segment=${seg}&page=${pg}&size=${sz}`);
+  const pg  = page    || 1;
+  const sz  = Math.min(size || 50, 50); // Cocos max 50 por página
+
+  // Intentar con subtype primero, si falla sin subtype
+  try {
+    return await _call('GET', `api/v1/markets/tickers/?instrument_type=${type}&instrument_subtype=${subtype}&settlement_days=${s}&currency=${c}&segment=${seg}&page=${pg}&size=${sz}`);
+  } catch {
+    return await _call('GET', `api/v1/markets/tickers/?instrument_type=${type}&settlement_days=${s}&currency=${c}&segment=${seg}&page=${pg}&size=${sz}`);
+  }
 }
 
 // ── Cuenta ────────────────────────────────────────────────────────────────────

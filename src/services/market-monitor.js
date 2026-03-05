@@ -146,10 +146,12 @@ function getIndicators(ticker) {
 // ── Polling ───────────────────────────────────────────────────────────────────
 
 function parseItem(item) {
-  // Acepta tanto respuesta de getMarketList como getQuote
-  const price    = item.last_price || item.close_price || item.previous_close_price || 0;
-  const variation= item.variation  || item.daily_variation || item.price_change_percentage || 0;
-  const volume   = item.volume     || item.traded_volume   || 0;
+  // Acepta todos los campos posibles de la API Cocos
+  const price    = item.last_price || item.close_price || item.previous_close_price
+                || item.previous_close || item.close || item.price || 0;
+  const variation= item.variation  || item.daily_variation || item.price_change_percentage
+                || item.price_change_pct || item.var || 0;
+  const volume   = item.volume     || item.traded_volume   || item.volume_nominal || 0;
   const open     = item.open_price || item.open || 0;
   const high     = item.high_price || item.high || 0;
   const low      = item.low_price  || item.low  || 0;
