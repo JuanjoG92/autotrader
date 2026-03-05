@@ -145,32 +145,70 @@ function getIndicators(ticker) {
 
 // ── Polling ───────────────────────────────────────────────────────────────────
 
+function parseItem(item) {
+  // Acepta tanto respuesta de getMarketList como getQuote
+  const price    = item.last_price || item.close_price || item.previous_close_price || 0;
+  const variation= item.variation  || item.daily_variation || item.price_change_percentage || 0;
+  const volume   = item.volume     || item.traded_volume   || 0;
+  const open     = item.open_price || item.open || 0;
+  const high     = item.high_price || item.high || 0;
+  const low      = item.low_price  || item.low  || 0;
+  return { price, variation, volume, open, high, low };
+}
+
 async function pollOnce() {
   if (!cocos.isReady()) return;
   const watchlist = getActiveWatchlist();
   const results   = [];
 
+  // ── Estrategia 1: batch por lista (funciona con mercado abierto Y cerrado) ──
+  try {
+    const [accR, cdrR] = await Promise.allSettled([
+      cocos.getMarketList('ACCIONES', 'LIDERES', '24hs', 'ARS', 'C', 1, 100),
+      cocos.getMarketList('CEDEARS',  'CEDEARS', '24hs', 'ARS', 'C', 1, 100),
+    ]);
+
+    const byTicker = {};
+    for (const r of [accR, cdrR]) {
+      if (r.status !== 'fulfilled') continue;
+      const items = Array.isArray(r.value) ? r.value : (r.value?.data || []);
+      for (const item of items) {
+        const tk = item.instrument_code || item.symbol || item.ticker;
+        if (tk) byTicker[tk] = item;
+      }
+    }
+
+    for (const w of watchlist) {
+      const item = byTicker[w.ticker];
+      if (!item) continue;
+      const { price, variation, volume, open, high, low } = parseItem(item);
+      if (price > 0) {
+        savePrice(w.ticker, price, variation, volume, open, high, low);
+        results.push({ ticker: w.ticker, price, variation, volume, indicators: getIndicators(w.ticker) });
+      }
+    }
+
+    if (results.length > 0) {
+      if (_broadcastFn) _broadcastFn({ type: 'market_update', data: results, timestamp: new Date().toISOString() });
+      console.log(`[Market] Batch actualizado: ${results.length} tickers`);
+      return results;
+    }
+  } catch (e) {
+    console.error('[Market] Error batch poll:', e.message);
+  }
+
+  // ── Estrategia 2: quote individual por ticker (fallback) ──
   for (const item of watchlist) {
     try {
       const longTicker = `${item.ticker}-0002-${item.segment}-CT-${item.currency}`;
       const quote = await cocos.getQuote(longTicker, item.segment);
-
-      const price    = quote?.last_price     || quote?.close_price || 0;
-      const variation= quote?.variation       || 0;
-      const volume   = quote?.volume          || 0;
-      const open     = quote?.open_price      || 0;
-      const high     = quote?.high_price      || 0;
-      const low      = quote?.low_price       || 0;
-
+      const { price, variation, volume, open, high, low } = parseItem(quote || {});
       if (price > 0) {
         savePrice(item.ticker, price, variation, volume, open, high, low);
-        const indicators = getIndicators(item.ticker);
-        results.push({ ticker: item.ticker, price, variation, volume, indicators });
+        results.push({ ticker: item.ticker, price, variation, volume, indicators: getIndicators(item.ticker) });
       }
-    } catch (e) {
-      // Silenciar errores individuales (instrumento sin cotización)
-    }
-    await new Promise(r => setTimeout(r, 200)); // rate limit
+    } catch {}
+    await new Promise(r => setTimeout(r, 200));
   }
 
   if (results.length > 0 && _broadcastFn) {

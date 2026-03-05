@@ -253,6 +253,7 @@
           <button class="filter-btn"        id="f-cdr"     onclick="setFilter('cdr')">CEDEARs</button>
           <button class="filter-btn"        id="f-top"     onclick="setFilter('top')">▲ Top Alzas</button>
           <button class="filter-btn"        id="f-bot"     onclick="setFilter('bot')">▼ Top Bajas</button>
+          <button class="filter-btn" id="btnPoll" onclick="forcePoll()" title="Actualizar precios ahora"><i class="fas fa-sync-alt"></i></button>
         </div>
       </div>
       <div class="market-table-wrap">
@@ -450,6 +451,15 @@ function renderTable() {
 }
 
 // ── Data load ─────────────────────────────────────────────────────────────────
+
+async function forcePoll() {
+  const btn = document.getElementById('btnPoll');
+  btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>'; btn.disabled = true;
+  const r = await api('POST', '/ai/market/poll');
+  btn.innerHTML = '<i class="fas fa-sync-alt"></i>'; btn.disabled = false;
+  if (r?.updated > 0) { await loadMarketPrices(); }
+  else console.log('[Poll]', r);
+}
 
 async function loadMarketPrices() {
   document.getElementById('syncIcon').className = 'fas fa-spinner fa-spin';

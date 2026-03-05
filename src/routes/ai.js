@@ -123,7 +123,7 @@ router.delete('/market/watchlist/:ticker', auth, ownerOnly, (req, res) => {
 router.post('/market/poll', auth, ownerOnly, async (req, res) => {
   try {
     const results = await market.pollOnce();
-    res.json({ ok: true, updated: results?.length || 0 });
+    res.json({ ok: true, updated: results?.length || 0, tickers: results?.map(r => r.ticker) || [] });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
