@@ -1,22 +1,26 @@
 // src/services/ai-trader.js
-// Agente de IA — analiza mercado por sector + noticias + genera/ejecuta señales
+// Agente IA — análisis sectorial + noticias + RAG + filtros configurables
 
 const { getDB }          = require('../models/db');
 const { getOpenAIToken } = require('./ai-token');
 const cocos              = require('./cocos');
 const market             = require('./market-monitor');
 const news               = require('./news-fetcher');
+const rag                = require('./rag');
 
 const ANALYSIS_MS  = 5 * 60 * 1000;
 const OPENAI_MODEL = 'gpt-4o-mini';
 
-const SECTORS = {
-  'Energía/Petróleo': ['YPFD', 'PAMP', 'TGNO4', 'TGSU2', 'CEPU', 'XOM', 'CVX'],
+const ALL_SECTORS = {
+  'Energia/Petroleo': ['YPFD', 'PAMP', 'TGNO4', 'TGSU2', 'CEPU', 'XOM', 'CVX'],
   'Bancos/Finanzas':  ['GGAL', 'BBAR', 'BMA', 'SUPV'],
   'Materiales':       ['ALUA', 'LOMA', 'TXAR'],
   'Tech Global':      ['AAPL', 'MSFT', 'GOOGL', 'NVDA', 'META', 'AMZN', 'TSLA'],
   'Latam/Otros':      ['MELI', 'TECO2'],
 };
+
+const CEDEARS  = new Set(['AAPL','MSFT','GOOGL','NVDA','META','AMZN','TSLA','XOM','CVX','MELI']);
+const ACCIONES = new Set(['YPFD','PAMP','TGNO4','TGSU2','CEPU','GGAL','BBAR','BMA','SUPV','ALUA','LOMA','TXAR','TECO2']);
 
 let _analysisTimer = null;
 let _broadcastFn   = null;
@@ -31,19 +35,27 @@ function getConfig() {
 }
 
 function updateConfig(changes) {
+  const db = getDB();
+  const newCols = {
+    sectors: 'TEXT DEFAULT "all"', asset_types: 'TEXT DEFAULT "BOTH"',
+    news_driven: 'INTEGER DEFAULT 1', news_weight: 'REAL DEFAULT 0.5',
+    use_rag: 'INTEGER DEFAULT 1', max_positions: 'INTEGER DEFAULT 5',
+    stop_loss_pct: 'REAL DEFAULT 5.0', take_profit_pct: 'REAL DEFAULT 10.0',
+  };
+  for (const [col, def] of Object.entries(newCols)) {
+    try { db.prepare(`ALTER TABLE ai_config ADD COLUMN ${col} ${def}`).run(); } catch {}
+  }
   const fields = Object.keys(changes).map(k => `${k} = ?`).join(', ');
-  getDB().prepare(`UPDATE ai_config SET ${fields}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(...Object.values(changes), 1);
+  db.prepare(`UPDATE ai_config SET ${fields}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(...Object.values(changes), 1);
   return getConfig();
 }
 
 // ── Señales ───────────────────────────────────────────────────────────────────
 
-function saveSignal(signal) {
-  return getDB().prepare(`
-    INSERT INTO ai_signals (ticker, action, confidence, price, quantity, reason, analysis)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-  `).run(signal.ticker, signal.action, signal.confidence, signal.price || 0,
-         signal.quantity || 0, signal.reason || '', signal.analysis || '');
+function saveSignal(s) {
+  return getDB().prepare(
+    'INSERT INTO ai_signals (ticker, action, confidence, price, quantity, reason, analysis) VALUES (?, ?, ?, ?, ?, ?, ?)'
+  ).run(s.ticker, s.action, s.confidence, s.price || 0, s.quantity || 0, s.reason || '', s.analysis || '');
 }
 
 function getRecentSignals(limit) {
@@ -54,40 +66,42 @@ function markSignalExecuted(id, orderId) {
   getDB().prepare('UPDATE ai_signals SET executed = 1, order_id = ? WHERE id = ?').run(orderId || '', id);
 }
 
-// ── Contexto de mercado por sector ───────────────────────────────────────────
+// ── Filtros ───────────────────────────────────────────────────────────────────
 
-function buildSectorContext() {
-  const lines = [];
-  for (const [sector, tickers] of Object.entries(SECTORS)) {
-    const sectorData = [];
-    for (const ticker of tickers) {
-      const ind = market.getIndicators(ticker);
-      if (!ind || ind.price <= 0 || ind.dataPoints < 2) continue;
-      const latest = market.getLatestPrice(ticker);
-      const v = latest?.variation || 0;
-      sectorData.push(
-        `  ${ticker}: $${ind.price.toFixed(2)} | Var:${v >= 0 ? '+' : ''}${v.toFixed(1)}% | ` +
-        `Tend5p:${ind.trend5}% | RSI:${ind.rsi ?? 'N/D'} | ` +
-        `SMA20:${ind.sma20 ? '$' + ind.sma20.toFixed(0) : 'N/D'} | ` +
-        `SMA50:${ind.sma50 ? '$' + ind.sma50.toFixed(0) : 'N/D'}`
-      );
-    }
-    if (sectorData.length > 0) {
-      lines.push(`SECTOR ${sector}:`);
-      lines.push(...sectorData);
+function getActiveTickers(cfg) {
+  const sectorFilter = cfg.sectors || 'all';
+  const typeFilter   = cfg.asset_types || 'BOTH';
+  let tickers = [];
+
+  if (sectorFilter === 'all') {
+    tickers = Object.values(ALL_SECTORS).flat();
+  } else {
+    const active = sectorFilter.split(',').map(s => s.trim().toLowerCase());
+    for (const [sector, list] of Object.entries(ALL_SECTORS)) {
+      if (active.some(s => sector.toLowerCase().includes(s))) tickers.push(...list);
     }
   }
-  return lines.length > 0 ? lines.join('\n') : 'Mercado cerrado o sin datos suficientes aún.';
+  if (typeFilter === 'ACCIONES') tickers = tickers.filter(t => ACCIONES.has(t));
+  else if (typeFilter === 'CEDEARS') tickers = tickers.filter(t => CEDEARS.has(t));
+  return [...new Set(tickers)];
 }
 
-// ── Contexto de noticias ──────────────────────────────────────────────────────
+// ── Contexto mercado ──────────────────────────────────────────────────────────
 
-function buildNewsContext(tickers) {
-  const items = news.getNewsForTickers(tickers, 10);
-  if (!items.length) return 'Sin noticias recientes disponibles.';
-  return items.map(n =>
-    `[${n.source}] ${n.title}`
-  ).join('\n');
+function buildMarketContext(tickers) {
+  const lines = [];
+  for (const [sector, list] of Object.entries(ALL_SECTORS)) {
+    const filtered = list.filter(t => tickers.includes(t));
+    if (!filtered.length) continue;
+    lines.push(`[${sector}]`);
+    for (const ticker of filtered) {
+      const ind = market.getIndicators(ticker);
+      if (!ind || ind.price <= 0 || ind.dataPoints < 2) { lines.push(`  ${ticker}: sin datos suficientes`); continue; }
+      const v = market.getLatestPrice(ticker)?.variation || 0;
+      lines.push(`  ${ticker}: $${ind.price.toFixed(2)} | Var:${v>=0?'+':''}${v.toFixed(1)}% | RSI:${ind.rsi??'N/D'} | SMA20:${ind.sma20?'$'+ind.sma20.toFixed(0):'N/D'} | SMA50:${ind.sma50?'$'+ind.sma50.toFixed(0):'N/D'} | Tend5p:${ind.trend5}%`);
+    }
+  }
+  return lines.join('\n') || 'Mercado cerrado o sin datos.';
 }
 
 // ── OpenAI ────────────────────────────────────────────────────────────────────
@@ -99,149 +113,96 @@ async function callOpenAI(prompt) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
     body: JSON.stringify({
-      model: OPENAI_MODEL,
-      temperature: 0.25,
-      max_tokens: 2000,
+      model: OPENAI_MODEL, temperature: 0.25, max_tokens: 2500,
       messages: [
-        {
-          role: 'system',
-          content: `Eres un agente de trading experto en el mercado de capitales argentino (BYMA/Merval) y en CEDEARs.
-Analizas datos técnicos, noticias y contexto macroeconómico para generar señales precisas de trading.
-Conoces los sectores: Energía (YPF, PAMP, gaseoductos), Bancos (Galicia, BBVA, Macro), Materiales (Aluar, Loma Negra, Ternium), Tech global (Apple, Microsoft, Nvidia, etc.) y CEDEARs.
-SIEMPRE respondes en JSON válido. Eres conservador: priorizás no perder capital. Usás stop-loss implícito en tus recomendaciones.
-Considerás el contexto macro argentino: dólar, inflación, reservas del BCRA, estabilidad política.`,
-        },
+        { role: 'system', content: `Eres un agente de trading experto en BYMA/Merval y CEDEARs argentinos.
+Analizas tecnico + noticias + documentos para generar señales de inversion. JSON valido siempre.
+Cuando usas noticias, las citas en el "reason". Conservador con el capital. No perder es prioridad.` },
         { role: 'user', content: prompt },
       ],
       response_format: { type: 'json_object' },
     }),
   });
-  if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(`OpenAI ${res.status}: ${e.error?.message || 'error'}`); }
-  const data = await res.json();
-  return JSON.parse(data.choices[0].message.content);
+  if (!res.ok) { const e = await res.json().catch(()=>({})); throw new Error(`OpenAI ${res.status}: ${e.error?.message}`); }
+  return JSON.parse((await res.json()).choices[0].message.content);
 }
 
-// ── Análisis principal ────────────────────────────────────────────────────────
+// ── Analisis principal ────────────────────────────────────────────────────────
 
 async function runAnalysis() {
   const cfg = getConfig();
   if (!cfg.enabled) return null;
   if (!cocos.isReady()) return null;
+  console.log('[AI-Trader] Iniciando analisis...');
 
-  console.log('[AI-Trader] Iniciando análisis sectorial...');
+  const tickers   = getActiveTickers(cfg);
+  const marketCtx = buildMarketContext(tickers);
+  const newsItems = cfg.news_driven !== 0 ? news.getNewsForTickers(tickers, 15) : [];
+  const newsCtx   = newsItems.length ? newsItems.map(n => `[${n.source}] ${n.title}`).join('\n') : 'Sin noticias recientes.';
+  const ragCtx    = cfg.use_rag !== 0 ? await rag.buildRAGContext('mercado argentino acciones cedear inversion ' + tickers.join(' ')) : '';
 
-  const marketCtx = buildSectorContext();
-  const allTickers = Object.values(SECTORS).flat();
-  const newsCtx   = buildNewsContext(allTickers);
+  let portfolio = 'Sin posiciones', buyingPower = 'Sin datos', marketOpen = false;
+  try { const bp = await cocos.getBuyingPower(); buyingPower = `ARS $${(bp?.['24hs']?.ars||0).toLocaleString()} | USD $${(bp?.['24hs']?.usd||0).toFixed(2)}`; } catch {}
+  try { const p = await cocos.getPortfolio(); if (p?.positions?.length) portfolio = p.positions.map(x => `${x.ticker||x.instrument_code}: ${x.quantity}uds`).join(' | '); } catch {}
+  try { const ms = await cocos.getMarketStatus(); marketOpen = !!(ms?.['24hs']||ms?.CI); } catch {}
 
-  let portfolio = 'Sin posiciones abiertas';
-  let buyingPower = 'Sin datos';
-  let marketOpen = false;
+  const newsInstr = cfg.news_driven !== 0
+    ? `INVERSION POR NOTICIAS ACTIVADA (peso: ${Math.round((cfg.news_weight||0.5)*100)}%). Noticia positiva confirmada → BUY. Noticia negativa confirmada → SELL. Citar la noticia en reason.`
+    : 'Solo analisis tecnico (sin noticias).';
+  const typeInstr = cfg.asset_types==='ACCIONES' ? 'Solo ACCIONES argentinas (BYMA).'
+                  : cfg.asset_types==='CEDEARS'  ? 'Solo CEDEARs (acciones ext. en pesos).'
+                  : 'Acciones y CEDEARs.';
 
-  try {
-    const bp = await cocos.getBuyingPower();
-    const arsDisp = bp?.['24hs']?.ars || bp?.CI?.ars || 0;
-    const usdDisp = bp?.['24hs']?.usd || bp?.CI?.usd || 0;
-    buyingPower = `ARS $${arsDisp.toLocaleString()} | USD $${usdDisp.toFixed(2)}`;
-  } catch {}
+  const prompt = `ANALISIS TRADING AUTOMATIZADO COCOS CAPITAL
 
-  try {
-    const port = await cocos.getPortfolio();
-    if (port?.positions?.length > 0) {
-      portfolio = port.positions.map(p =>
-        `${p.ticker || p.instrument_code}: ${p.quantity} uds @ $${p.last_price}`
-      ).join(' | ');
-    }
-  } catch {}
+MERCADO: ${marketOpen?'ABIERTO':'CERRADO (preparar para apertura)'}
+PODER COMPRA: ${buyingPower} | MAX/OP: ARS $${cfg.max_per_trade_ars} | RIESGO: ${cfg.risk_level}
+STOP LOSS: ${cfg.stop_loss_pct||5}% | TAKE PROFIT: ${cfg.take_profit_pct||10}%
+CARTERA: ${portfolio}
 
-  try {
-    const ms = await cocos.getMarketStatus();
-    marketOpen = !!(ms?.['24hs'] || ms?.CI);
-  } catch {}
+FILTROS: ${typeInstr} | Sectores: ${cfg.sectors==='all'?'Todos':cfg.sectors}
+${newsInstr}
 
-  const prompt = `
-Realiza un análisis completo del mercado argentino y genera señales de trading por sector.
-
-ESTADO DEL MERCADO: ${marketOpen ? 'ABIERTO ✅' : 'CERRADO ⏸ (prepará señales para apertura)'}
-PODER DE COMPRA: ${buyingPower}
-CARTERA ACTUAL: ${portfolio}
-MÁX POR OPERACIÓN: ARS $${cfg.max_per_trade_ars}
-
-═══════════════════════════════════
-DATOS TÉCNICOS POR SECTOR
-═══════════════════════════════════
+=== DATOS TECNICOS POR SECTOR ===
 ${marketCtx}
 
-═══════════════════════════════════
-NOTICIAS FINANCIERAS RECIENTES
-═══════════════════════════════════
+=== NOTICIAS FINANCIERAS (USAR PARA INVERTIR SI news_driven=1) ===
 ${newsCtx}
+${ragCtx?`\n=== DOCUMENTOS PERSONALES DEL USUARIO ===\n${ragCtx}`:''}
 
-═══════════════════════════════════
-REGLAS DE ANÁLISIS
-═══════════════════════════════════
-1. RSI > 70 = sobrecomprado → considerar VENTA
-2. RSI < 30 = sobrevendido → considerar COMPRA
-3. Precio > SMA20 y SMA20 > SMA50 = tendencia alcista → COMPRA
-4. Precio < SMA20 y SMA20 < SMA50 = tendencia bajista → VENTA
-5. Tendencia 5p > 3% con RSI 40-65 = momentum alcista → COMPRA
-6. Considerar contexto macroeconómico argentino
-7. CEDEARs: analizar también contexto internacional del sector
-8. Priorizar sectores: Energía y Bancos argentinos (más líquidos), Tech global (CEDEARs seguros)
-9. quantity debe ser entero ≥ 1, precio en ARS
-10. Solo señales con datos suficientes (≥5 datapoints)
+=== REGLAS DE DECISION ===
+1. RSI<30 + noticia positiva = BUY alta confianza
+2. RSI>70 + noticia negativa = SELL alta confianza
+3. Precio>SMA20>SMA50 + noticia positiva = BUY media-alta confianza
+4. Noticia muy positiva sin datos tecnicos = BUY confianza moderada (0.65-0.75)
+5. quantity = floor(max_per_trade_ars / precio_actual), minimo 1
+6. Max ${cfg.max_positions||5} señales por analisis
 
-Responde SOLO con este JSON:
+RESPONDE SOLO JSON:
 {
-  "signals": [
-    {
-      "ticker": "YPFD",
-      "sector": "Energía/Petróleo",
-      "action": "BUY",
-      "confidence": 0.82,
-      "price": 24500,
-      "quantity": 2,
-      "reason": "Explicación técnica + contexto noticia si aplica"
-    }
-  ],
-  "sector_analysis": {
-    "Energía/Petróleo": "análisis breve",
-    "Bancos/Finanzas": "análisis breve",
-    "Tech Global": "análisis breve"
-  },
-  "analysis": "Resumen ejecutivo del mercado en 2-3 oraciones",
-  "market_sentiment": "BULLISH|BEARISH|NEUTRAL",
-  "macro_note": "Comentario breve sobre contexto macro argentino"
-}
-Si no hay señales claras, signals: []`;
+  "signals":[{"ticker":"YPFD","sector":"Energia/Petroleo","action":"BUY","confidence":0.82,"price":24500,"quantity":2,"reason":"RSI 28 + noticia: YPF anuncia expansion Vaca Muerta","news_driven":true}],
+  "sector_analysis":{"Energia/Petroleo":"texto breve","Bancos/Finanzas":"texto breve"},
+  "analysis":"Resumen ejecutivo 2-3 oraciones",
+  "market_sentiment":"BULLISH|BEARISH|NEUTRAL",
+  "macro_note":"Contexto macro argentino"
+}`;
 
   let result;
-  try {
-    result = await callOpenAI(prompt);
-  } catch (e) {
-    console.error('[AI-Trader] Error OpenAI:', e.message);
-    return null;
-  }
+  try { result = await callOpenAI(prompt); } catch (e) { console.error('[AI-Trader] Error OpenAI:', e.message); return null; }
 
   const signals = result.signals || [];
-  console.log(`[AI-Trader] ${signals.length} señales | Sentimiento: ${result.market_sentiment}`);
+  console.log(`[AI-Trader] ${signals.length} señales | ${result.market_sentiment}`);
 
   for (const sig of signals) {
-    if (sig.confidence < cfg.min_confidence) continue;
+    if (!sig.ticker || sig.confidence < cfg.min_confidence) continue;
     const saved = saveSignal({ ...sig, analysis: result.analysis });
-
     if (cfg.auto_execute && marketOpen && sig.price > 0 && sig.quantity > 0) {
       try {
-        let orderResult;
-        if (sig.action === 'BUY')  orderResult = await cocos.placeBuyOrder(sig.ticker, sig.quantity, sig.price, '24hs', 'ARS', 'C');
-        if (sig.action === 'SELL') orderResult = await cocos.placeSellOrder(sig.ticker, sig.quantity, sig.price, '24hs', 'ARS', 'C');
-        if (orderResult) {
-          markSignalExecuted(saved.lastInsertRowid, orderResult.Orden || orderResult.id || 'OK');
-          console.log(`[AI-Trader] ✅ Ejecutado: ${sig.action} ${sig.ticker} x${sig.quantity} @ $${sig.price}`);
-        }
-      } catch (e) {
-        console.error(`[AI-Trader] Error ejecutando ${sig.ticker}:`, e.message);
-      }
+        let ord;
+        if (sig.action==='BUY')  ord = await cocos.placeBuyOrder(sig.ticker, sig.quantity, sig.price, '24hs', 'ARS', 'C');
+        if (sig.action==='SELL') ord = await cocos.placeSellOrder(sig.ticker, sig.quantity, sig.price, '24hs', 'ARS', 'C');
+        if (ord) { markSignalExecuted(saved.lastInsertRowid, ord.Orden||ord.id||'OK'); console.log(`[AI-Trader] Ejecutado: ${sig.action} ${sig.ticker} x${sig.quantity}`); }
+      } catch (e) { console.error(`[AI-Trader] Error ejecutando ${sig.ticker}:`, e.message); }
     }
   }
 
@@ -249,15 +210,13 @@ Si no hay señales claras, signals: []`;
   return result;
 }
 
-// ── Init ──────────────────────────────────────────────────────────────────────
-
 function init(broadcastFn) {
   _broadcastFn = broadcastFn;
   if (_analysisTimer) clearInterval(_analysisTimer);
   _analysisTimer = setInterval(async () => {
     try { await runAnalysis(); } catch (e) { console.error('[AI-Trader]', e.message); }
   }, ANALYSIS_MS);
-  console.log('[AI-Trader] Agente sectorial iniciado — análisis cada 5 min');
+  console.log('[AI-Trader] Agente iniciado — analisis cada 5 min');
 }
 
 module.exports = { init, runAnalysis, getConfig, updateConfig, getRecentSignals };

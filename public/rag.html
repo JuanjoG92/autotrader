@@ -1,0 +1,508 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Config IA + RAG — AutoTrader</title>
+  <link rel="stylesheet" href="/css/app.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root { --green:#10b981; --purple:#8b5cf6; --amber:#f59e0b; --red:#ef4444; --muted:#64748b; }
+    .rag-page { display:flex; min-height:100vh; background:#0f172a; color:#e2e8f0; font-family:'Inter',sans-serif; }
+    .sidebar { width:240px; background:#1e293b; padding:1.5rem 0; flex-shrink:0; }
+    .sidebar-logo { display:flex;align-items:center;gap:.5rem;padding:.5rem 1.5rem 1.5rem;font-size:1.1rem;font-weight:700;color:#e2e8f0;text-decoration:none; }
+    .sidebar-link { display:flex;align-items:center;gap:.75rem;padding:.65rem 1.5rem;color:#94a3b8;text-decoration:none;transition:all .2s;font-size:.88rem; }
+    .sidebar-link:hover { background:rgba(255,255,255,.05);color:#e2e8f0; }
+    .sidebar-ext { display:flex;align-items:center;gap:.75rem;padding:.6rem 1rem;margin:.2rem .5rem;border-radius:8px;text-decoration:none;font-size:.88rem; }
+    .main { flex:1; padding:2rem; max-width:1200px; }
+    .page-title { font-size:1.5rem;font-weight:700;margin-bottom:.25rem; }
+    .page-sub { color:var(--muted);font-size:.85rem;margin-bottom:2rem; }
+    .grid-2 { display:grid;grid-template-columns:1fr 1fr;gap:1.5rem; }
+    .grid-3 { display:grid;grid-template-columns:1fr 1fr 1fr;gap:1rem; }
+    .card { background:#1e293b;border-radius:12px;padding:1.5rem;border:1px solid #334155; }
+    .card-title { font-size:.75rem;font-weight:600;letter-spacing:.05em;color:var(--muted);text-transform:uppercase;margin-bottom:1rem;display:flex;align-items:center;gap:.4rem; }
+    .form-group { margin-bottom:1rem; }
+    .form-label { display:block;font-size:.78rem;font-weight:500;color:#94a3b8;margin-bottom:.35rem; }
+    .form-control { width:100%;background:#0f172a;border:1px solid #334155;border-radius:8px;padding:.55rem .75rem;color:#e2e8f0;font-size:.85rem;box-sizing:border-box; }
+    .form-control:focus { outline:none;border-color:var(--purple);box-shadow:0 0 0 2px rgba(139,92,246,.2); }
+    select.form-control option { background:#1e293b; }
+    .toggle-wrap { display:flex;align-items:center;justify-content:space-between;padding:.6rem .75rem;background:#0f172a;border-radius:8px;margin-bottom:.5rem; }
+    .toggle-label { font-size:.85rem;color:#e2e8f0; }
+    .toggle { position:relative;display:inline-block;width:40px;height:22px; }
+    .toggle input { opacity:0;width:0;height:0; }
+    .slider { position:absolute;cursor:pointer;inset:0;background:#334155;border-radius:22px;transition:.3s; }
+    .slider:before { content:'';position:absolute;height:16px;width:16px;left:3px;bottom:3px;background:#fff;border-radius:50%;transition:.3s; }
+    input:checked+.slider { background:var(--purple); }
+    input:checked+.slider:before { transform:translateX(18px); }
+    .btn { display:inline-flex;align-items:center;gap:.4rem;padding:.55rem 1.1rem;border-radius:8px;font-size:.85rem;font-weight:500;cursor:pointer;border:none;transition:all .2s; }
+    .btn-primary { background:var(--purple);color:#fff; } .btn-primary:hover { background:#7c3aed; }
+    .btn-green  { background:var(--green);color:#fff; } .btn-green:hover { background:#059669; }
+    .btn-red    { background:var(--red);color:#fff; } .btn-red:hover { background:#dc2626; }
+    .btn-ghost  { background:transparent;color:#94a3b8;border:1px solid #334155; } .btn-ghost:hover { background:#1e293b;color:#e2e8f0; }
+    .btn:disabled { opacity:.5;cursor:not-allowed; }
+    .sector-grid { display:grid;grid-template-columns:1fr 1fr;gap:.4rem; }
+    .sector-chip { display:flex;align-items:center;gap:.5rem;padding:.45rem .7rem;background:#0f172a;border:1px solid #334155;border-radius:8px;cursor:pointer;transition:all .2s;font-size:.78rem; }
+    .sector-chip.active { border-color:var(--green);background:rgba(16,185,129,.1);color:var(--green); }
+    .sector-chip input { display:none; }
+    .doc-item { display:flex;align-items:center;gap:.75rem;padding:.75rem;background:#0f172a;border-radius:8px;margin-bottom:.5rem;border:1px solid #1e3a5f; }
+    .doc-icon { width:36px;height:36px;border-radius:8px;display:flex;align-items:center;justify-content:center;background:#1e3a5f;color:var(--green);font-size:.9rem;flex-shrink:0; }
+    .doc-name { font-size:.85rem;font-weight:500;color:#e2e8f0; }
+    .doc-meta { font-size:.72rem;color:var(--muted); }
+    .upload-zone { border:2px dashed #334155;border-radius:12px;padding:2rem;text-align:center;cursor:pointer;transition:all .2s;background:#0f172a; }
+    .upload-zone:hover, .upload-zone.drag { border-color:var(--green);background:rgba(16,185,129,.05); }
+    .upload-zone i { font-size:2rem;color:var(--green);margin-bottom:.5rem; }
+    .badge { display:inline-flex;align-items:center;gap:.25rem;padding:.2rem .55rem;border-radius:4px;font-size:.7rem;font-weight:600; }
+    .badge-green { background:rgba(16,185,129,.15);color:var(--green); }
+    .badge-purple { background:rgba(139,92,246,.15);color:var(--purple); }
+    .badge-amber { background:rgba(245,158,11,.15);color:var(--amber); }
+    .badge-red { background:rgba(239,68,68,.15);color:var(--red); }
+    .badge-gray { background:rgba(100,116,139,.15);color:var(--muted); }
+    .alert { padding:.75rem 1rem;border-radius:8px;margin-bottom:1rem;font-size:.84rem; }
+    .alert-green { background:rgba(16,185,129,.1);border:1px solid rgba(16,185,129,.3);color:#6ee7b7; }
+    .alert-red { background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);color:#fca5a5; }
+    .search-result { padding:.65rem;background:#0f172a;border-radius:6px;margin-bottom:.4rem;border-left:2px solid var(--green); }
+    .search-result-text { font-size:.8rem;color:#cbd5e1;line-height:1.5; }
+    .search-result-meta { font-size:.7rem;color:var(--muted);margin-top:.25rem; }
+    .range-val { color:var(--purple);font-weight:600; }
+    @media(max-width:768px) { .sidebar{display:none} .grid-2,.grid-3{grid-template-columns:1fr} }
+  </style>
+</head>
+<body class="rag-page">
+
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <a href="/" class="sidebar-logo"><i class="fas fa-chart-line"></i> AutoTrader</a>
+    <nav>
+      <a href="/dashboard" class="sidebar-link"><i class="fas fa-home"></i> Resumen</a>
+      <a href="/cocos" class="sidebar-ext" style="background:rgba(139,92,246,.1);border-left:2px solid #8b5cf6;">
+        <i class="fas fa-landmark" style="color:#8b5cf6"></i><span style="color:#c4b5fd">Cocos Capital</span>
+      </a>
+      <a href="/rag" class="sidebar-ext" style="background:rgba(16,185,129,.15);border-left:2px solid #10b981;">
+        <i class="fas fa-brain" style="color:#10b981"></i><span style="color:#6ee7b7;font-weight:600">Config IA + RAG</span>
+      </a>
+    </nav>
+    <div style="position:absolute;bottom:1rem;left:0;right:0;padding:0 1rem;">
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:.6rem .75rem;background:#0f172a;border-radius:8px;">
+        <div style="display:flex;align-items:center;gap:.5rem;font-size:.8rem;color:#94a3b8">
+          <i class="fas fa-user-circle"></i><span id="userName">Usuario</span>
+        </div>
+        <button onclick="logout()" style="background:none;border:none;color:#64748b;cursor:pointer"><i class="fas fa-sign-out-alt"></i></button>
+      </div>
+    </div>
+  </aside>
+
+  <!-- Main -->
+  <main class="main">
+    <div class="page-title">🧠 Configuración IA + RAG</div>
+    <div class="page-sub">Configurá exactamente cómo invierte la IA, qué sectores, qué tipo de activos y subí tus propios documentos de referencia.</div>
+
+    <div id="alertBox"></div>
+
+    <!-- Grid principal -->
+    <div class="grid-2">
+
+      <!-- === FILTROS DE INVERSIÓN === -->
+      <div class="card">
+        <div class="card-title"><i class="fas fa-filter" style="color:var(--green)"></i> Filtros de Inversión</div>
+
+        <div class="form-group">
+          <label class="form-label">Tipo de activos</label>
+          <select id="assetTypes" class="form-control">
+            <option value="BOTH">Acciones + CEDEARs</option>
+            <option value="ACCIONES">Solo Acciones (BYMA)</option>
+            <option value="CEDEARS">Solo CEDEARs (acciones ext.)</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Sectores activos (seleccioná los que querés)</label>
+          <div class="sector-grid" id="sectorGrid">
+            <label class="sector-chip active" data-sector="all">
+              <i class="fas fa-globe-americas"></i> Todos los sectores
+            </label>
+            <label class="sector-chip" data-sector="Energia/Petroleo">
+              <i class="fas fa-oil-well"></i> Energía / Petróleo
+            </label>
+            <label class="sector-chip" data-sector="Bancos/Finanzas">
+              <i class="fas fa-university"></i> Bancos / Finanzas
+            </label>
+            <label class="sector-chip" data-sector="Materiales">
+              <i class="fas fa-industry"></i> Materiales
+            </label>
+            <label class="sector-chip" data-sector="Tech Global">
+              <i class="fab fa-microchip"></i> Tech Global (CEDEARs)
+            </label>
+            <label class="sector-chip" data-sector="Latam/Otros">
+              <i class="fas fa-globe"></i> Latam / Otros
+            </label>
+          </div>
+        </div>
+
+        <div class="toggle-wrap">
+          <span class="toggle-label">📰 Invertir basado en noticias</span>
+          <label class="toggle"><input type="checkbox" id="newsDriven" checked><span class="slider"></span></label>
+        </div>
+
+        <div class="form-group" id="newsWeightGroup">
+          <label class="form-label">Peso de noticias vs técnico: <span class="range-val" id="newsWeightVal">50%</span></label>
+          <input type="range" id="newsWeight" class="form-control" min="0" max="100" value="50" style="padding:.2rem 0;cursor:pointer"
+            oninput="document.getElementById('newsWeightVal').textContent=this.value+'%'">
+          <div style="display:flex;justify-content:space-between;font-size:.7rem;color:var(--muted)">
+            <span>Solo técnico</span><span>Técnico + Noticias</span><span>Solo noticias</span>
+          </div>
+        </div>
+
+        <button class="btn btn-green btn-block" onclick="saveFilters()" style="width:100%">
+          <i class="fas fa-save"></i> Guardar Filtros
+        </button>
+      </div>
+
+      <!-- === PARÁMETROS IA === -->
+      <div class="card">
+        <div class="card-title"><i class="fas fa-sliders-h" style="color:var(--purple)"></i> Parámetros del Agente</div>
+
+        <div class="toggle-wrap">
+          <span class="toggle-label">🤖 Agente IA activo</span>
+          <label class="toggle"><input type="checkbox" id="aiEnabled"><span class="slider"></span></label>
+        </div>
+        <div class="toggle-wrap">
+          <span class="toggle-label">⚡ Auto-ejecutar órdenes</span>
+          <label class="toggle"><input type="checkbox" id="aiAutoExec"><span class="slider"></span></label>
+        </div>
+        <div class="toggle-wrap">
+          <span class="toggle-label">📚 Usar RAG (documentos propios)</span>
+          <label class="toggle"><input type="checkbox" id="useRag" checked><span class="slider"></span></label>
+        </div>
+
+        <div class="grid-3" style="margin-top:.75rem">
+          <div class="form-group">
+            <label class="form-label">Máx/operación (ARS)</label>
+            <input type="number" id="maxTrade" class="form-control" value="50000" min="1000" step="1000">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Confianza mín (%)</label>
+            <input type="number" id="minConf" class="form-control" value="75" min="50" max="99">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Max posiciones</label>
+            <input type="number" id="maxPos" class="form-control" value="5" min="1" max="20">
+          </div>
+        </div>
+
+        <div class="grid-3">
+          <div class="form-group">
+            <label class="form-label">Stop Loss (%)</label>
+            <input type="number" id="stopLoss" class="form-control" value="5" min="1" max="50" step="0.5">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Take Profit (%)</label>
+            <input type="number" id="takeProfit" class="form-control" value="10" min="1" max="100" step="0.5">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Nivel de riesgo</label>
+            <select id="riskLevel" class="form-control">
+              <option value="low">Bajo</option>
+              <option value="medium" selected>Medio</option>
+              <option value="high">Alto</option>
+            </select>
+          </div>
+        </div>
+
+        <button class="btn btn-primary" onclick="saveParams()" style="width:100%">
+          <i class="fas fa-save"></i> Guardar Parámetros
+        </button>
+      </div>
+    </div>
+
+    <!-- === DOCUMENTOS RAG === -->
+    <div class="card" style="margin-top:1.5rem">
+      <div class="card-title"><i class="fas fa-book-open" style="color:var(--amber)"></i> Base de Conocimiento (RAG)</div>
+      <p style="font-size:.82rem;color:var(--muted);margin:-.25rem 0 1rem">
+        Subí tus propios documentos: informes de empresas, análisis propios, estrategias. La IA los usa como contexto para tomar decisiones.
+        Formatos: TXT, MD, CSV, JSON, PDF (máx. 5MB)
+      </p>
+
+      <div class="grid-2">
+        <!-- Upload -->
+        <div>
+          <div class="upload-zone" id="uploadZone" onclick="document.getElementById('fileInput').click()"
+               ondragover="event.preventDefault();this.classList.add('drag')" ondragleave="this.classList.remove('drag')"
+               ondrop="handleDrop(event)">
+            <i class="fas fa-cloud-upload-alt"></i>
+            <div style="font-weight:500;color:#94a3b8">Arrastrá un archivo o hacé click</div>
+            <div style="font-size:.75rem;color:var(--muted);margin-top:.25rem">TXT, MD, CSV, JSON, PDF hasta 5MB</div>
+          </div>
+          <input type="file" id="fileInput" style="display:none" accept=".txt,.md,.csv,.json,.pdf" onchange="uploadFile(this.files[0])">
+
+          <!-- Texto directo -->
+          <div style="margin-top:1rem">
+            <label class="form-label">O pegá texto directamente</label>
+            <textarea id="directText" class="form-control" rows="4" placeholder="Pegá análisis, notas, estrategias..."></textarea>
+            <input type="text" id="directName" class="form-control" placeholder="Nombre del documento (ej: Mi estrategia YPF)" style="margin-top:.4rem">
+            <button class="btn btn-green" onclick="uploadText()" style="margin-top:.5rem;width:100%">
+              <i class="fas fa-plus"></i> Agregar texto
+            </button>
+          </div>
+        </div>
+
+        <!-- Documentos subidos -->
+        <div>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.75rem">
+            <span style="font-size:.82rem;color:var(--muted)">Documentos cargados</span>
+            <span id="docsCount" class="badge badge-green">0 docs</span>
+          </div>
+          <div id="docsList" style="max-height:280px;overflow-y:auto">
+            <div style="color:var(--muted);font-size:.8rem;text-align:center;padding:2rem">Sin documentos aún</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Búsqueda semántica test -->
+      <div style="margin-top:1.5rem;padding-top:1.5rem;border-top:1px solid #334155">
+        <div class="card-title"><i class="fas fa-search" style="color:var(--purple)"></i> Probar búsqueda semántica</div>
+        <div style="display:flex;gap:.5rem;margin-bottom:.75rem">
+          <input type="text" id="searchQuery" class="form-control" placeholder="Ej: estrategia YPF, noticias energía, análisis técnico..." style="flex:1">
+          <button class="btn btn-primary" onclick="testSearch()"><i class="fas fa-search"></i> Buscar</button>
+        </div>
+        <div id="searchResults"></div>
+      </div>
+    </div>
+
+    <!-- Estado del sistema -->
+    <div class="card" style="margin-top:1.5rem">
+      <div class="card-title"><i class="fas fa-heartbeat" style="color:var(--green)"></i> Estado del Sistema IA</div>
+      <div class="grid-3">
+        <div style="text-align:center;padding:1rem;background:#0f172a;border-radius:8px">
+          <div style="font-size:.7rem;color:var(--muted);margin-bottom:.5rem">NOTICIAS</div>
+          <div id="newsCount" style="font-size:1.5rem;font-weight:700;color:var(--green)">-</div>
+          <div style="font-size:.72rem;color:var(--muted)">artículos en DB</div>
+        </div>
+        <div style="text-align:center;padding:1rem;background:#0f172a;border-radius:8px">
+          <div style="font-size:.7rem;color:var(--muted);margin-bottom:.5rem">DOCUMENTOS RAG</div>
+          <div id="ragCount" style="font-size:1.5rem;font-weight:700;color:var(--amber)">-</div>
+          <div style="font-size:.72rem;color:var(--muted)">documentos / chunks</div>
+        </div>
+        <div style="text-align:center;padding:1rem;background:#0f172a;border-radius:8px">
+          <div style="font-size:.7rem;color:var(--muted);margin-bottom:.5rem">CONFIGURACIÓN</div>
+          <div id="cfgStatus" style="font-size:1.5rem;font-weight:700;color:var(--purple)">-</div>
+          <div style="font-size:.72rem;color:var(--muted)">estado agente</div>
+        </div>
+      </div>
+      <div style="display:flex;gap:.5rem;margin-top:1rem">
+        <button class="btn btn-ghost" onclick="fetchNews()" style="flex:1"><i class="fas fa-sync"></i> Actualizar noticias ahora</button>
+        <button class="btn btn-primary" onclick="window.location='/cocos'" style="flex:1"><i class="fas fa-chart-line"></i> Ir a Cocos Capital</button>
+      </div>
+    </div>
+
+  </main>
+
+  <script src="/js/app.js"></script>
+  <script>
+    const _token = localStorage.getItem('at_token') || '';
+    if (!_token) location.href = '/login';
+
+    try {
+      const p = JSON.parse(atob(_token.split('.')[1]));
+      document.getElementById('userName').textContent = p.name || p.email || 'Usuario';
+    } catch {}
+
+    const h = () => ({ 'Content-Type': 'application/json', 'Authorization': `Bearer ${_token}` });
+
+    async function api(method, path, body) {
+      const res = await fetch('/api' + path, { method, headers: h(), body: body ? JSON.stringify(body) : undefined });
+      if (res.status === 401) { location.href = '/login'; return null; }
+      const text = await res.text();
+      try { return JSON.parse(text); } catch { return { error: text }; }
+    }
+
+    function showAlert(msg, type) {
+      document.getElementById('alertBox').innerHTML =
+        `<div class="alert alert-${type}">${msg}</div>`;
+      setTimeout(() => document.getElementById('alertBox').innerHTML = '', 4000);
+    }
+
+    // ── Sectores ──────────────────────────────────────────────────────────────
+
+    let _selectedSectors = ['all'];
+
+    document.querySelectorAll('.sector-chip').forEach(chip => {
+      chip.addEventListener('click', (e) => {
+        const s = chip.dataset.sector;
+        if (s === 'all') {
+          _selectedSectors = ['all'];
+          document.querySelectorAll('.sector-chip').forEach(c => c.classList.remove('active'));
+          chip.classList.add('active');
+        } else {
+          const allChip = document.querySelector('[data-sector="all"]');
+          allChip.classList.remove('active');
+          _selectedSectors = _selectedSectors.filter(x => x !== 'all');
+          if (_selectedSectors.includes(s)) {
+            _selectedSectors = _selectedSectors.filter(x => x !== s);
+            chip.classList.remove('active');
+          } else {
+            _selectedSectors.push(s);
+            chip.classList.add('active');
+          }
+          if (_selectedSectors.length === 0) {
+            _selectedSectors = ['all'];
+            allChip.classList.add('active');
+          }
+        }
+      });
+    });
+
+    // ── Guardar ───────────────────────────────────────────────────────────────
+
+    async function saveFilters() {
+      const sectors    = _selectedSectors.includes('all') ? 'all' : _selectedSectors.join(',');
+      const assetTypes = document.getElementById('assetTypes').value;
+      const newsDriven = document.getElementById('newsDriven').checked ? 1 : 0;
+      const newsWeight = parseFloat(document.getElementById('newsWeight').value) / 100;
+      const r = await api('PUT', '/rag/ai-config', { sectors, asset_types: assetTypes, news_driven: newsDriven, news_weight: newsWeight });
+      if (r && !r.error) showAlert('✅ Filtros guardados correctamente', 'green');
+      else showAlert('❌ Error: ' + (r?.error || 'desconocido'), 'red');
+    }
+
+    async function saveParams() {
+      const cfg = {
+        enabled:           document.getElementById('aiEnabled').checked ? 1 : 0,
+        auto_execute:      document.getElementById('aiAutoExec').checked ? 1 : 0,
+        use_rag:           document.getElementById('useRag').checked ? 1 : 0,
+        max_per_trade_ars: parseFloat(document.getElementById('maxTrade').value),
+        min_confidence:    parseFloat(document.getElementById('minConf').value) / 100,
+        max_positions:     parseInt(document.getElementById('maxPos').value),
+        stop_loss_pct:     parseFloat(document.getElementById('stopLoss').value),
+        take_profit_pct:   parseFloat(document.getElementById('takeProfit').value),
+        risk_level:        document.getElementById('riskLevel').value,
+      };
+      const r = await api('PUT', '/rag/ai-config', cfg);
+      if (r && !r.error) showAlert('✅ Parámetros guardados', 'green');
+      else showAlert('❌ Error: ' + (r?.error || 'desconocido'), 'red');
+    }
+
+    // ── Cargar config ─────────────────────────────────────────────────────────
+
+    async function loadConfig() {
+      const cfg = await api('GET', '/rag/ai-config');
+      if (!cfg) return;
+      document.getElementById('aiEnabled').checked   = !!cfg.enabled;
+      document.getElementById('aiAutoExec').checked  = !!cfg.auto_execute;
+      document.getElementById('useRag').checked      = cfg.use_rag !== 0;
+      document.getElementById('newsDriven').checked  = cfg.news_driven !== 0;
+      document.getElementById('maxTrade').value      = cfg.max_per_trade_ars || 50000;
+      document.getElementById('minConf').value       = ((cfg.min_confidence || 0.75) * 100).toFixed(0);
+      document.getElementById('maxPos').value        = cfg.max_positions || 5;
+      document.getElementById('stopLoss').value      = cfg.stop_loss_pct || 5;
+      document.getElementById('takeProfit').value    = cfg.take_profit_pct || 10;
+      document.getElementById('riskLevel').value     = cfg.risk_level || 'medium';
+      document.getElementById('assetTypes').value    = cfg.asset_types || 'BOTH';
+      if (cfg.news_weight) {
+        document.getElementById('newsWeight').value  = (cfg.news_weight * 100).toFixed(0);
+        document.getElementById('newsWeightVal').textContent = (cfg.news_weight * 100).toFixed(0) + '%';
+      }
+      // Sectores
+      if (cfg.sectors && cfg.sectors !== 'all') {
+        _selectedSectors = cfg.sectors.split(',').map(s => s.trim());
+        document.querySelectorAll('.sector-chip').forEach(c => {
+          const s = c.dataset.sector;
+          c.classList.toggle('active', _selectedSectors.includes(s));
+        });
+        document.querySelector('[data-sector="all"]').classList.remove('active');
+      }
+      document.getElementById('cfgStatus').textContent = cfg.enabled ? '🟢 Activo' : '🔴 Inactivo';
+    }
+
+    // ── Documentos RAG ────────────────────────────────────────────────────────
+
+    async function loadDocs() {
+      const docs = await api('GET', '/rag/documents');
+      if (!docs) return;
+      document.getElementById('docsCount').textContent = docs.length + ' docs';
+      document.getElementById('ragCount').textContent  = docs.reduce((a, d) => a + (d.chunks_count || 0), 0) + ' chunks';
+      const el = document.getElementById('docsList');
+      if (!docs.length) { el.innerHTML = '<div style="color:var(--muted);font-size:.8rem;text-align:center;padding:2rem">Sin documentos aún</div>'; return; }
+      el.innerHTML = docs.map(d => `
+        <div class="doc-item">
+          <div class="doc-icon"><i class="fas fa-file-alt"></i></div>
+          <div style="flex:1;min-width:0">
+            <div class="doc-name" title="${d.name}">${d.name.length > 35 ? d.name.substring(0,35)+'...' : d.name}</div>
+            <div class="doc-meta">${d.chunks_count} chunks · ${new Date(d.created_at).toLocaleDateString('es-AR')}</div>
+          </div>
+          <button class="btn btn-red" onclick="deleteDoc(${d.id})" style="padding:.3rem .6rem;font-size:.75rem">
+            <i class="fas fa-trash"></i>
+          </button>
+        </div>`).join('');
+    }
+
+    async function deleteDoc(id) {
+      if (!confirm('¿Eliminar este documento?')) return;
+      await api('DELETE', '/rag/documents/' + id);
+      loadDocs();
+    }
+
+    async function uploadFile(file) {
+      if (!file) return;
+      const btn = document.getElementById('uploadZone');
+      btn.innerHTML = '<i class="fas fa-spinner fa-spin" style="font-size:2rem;color:var(--green)"></i><div>Procesando...</div>';
+      const fd = new FormData();
+      fd.append('file', file);
+      try {
+        const res = await fetch('/api/rag/documents', { method: 'POST', headers: { 'Authorization': `Bearer ${_token}` }, body: fd });
+        const data = await res.json();
+        if (data.ok) { showAlert(`✅ "${data.name}" subido — ${data.chunksCount} chunks`, 'green'); loadDocs(); }
+        else showAlert('❌ Error: ' + (data.error || 'desconocido'), 'red');
+      } catch (e) { showAlert('❌ Error: ' + e.message, 'red'); }
+      btn.innerHTML = '<i class="fas fa-cloud-upload-alt"></i><div style="font-weight:500;color:#94a3b8">Arrastrá un archivo o hacé click</div><div style="font-size:.75rem;color:var(--muted);margin-top:.25rem">TXT, MD, CSV, JSON, PDF hasta 5MB</div>';
+    }
+
+    function handleDrop(e) {
+      e.preventDefault();
+      document.getElementById('uploadZone').classList.remove('drag');
+      const file = e.dataTransfer.files[0];
+      if (file) uploadFile(file);
+    }
+
+    async function uploadText() {
+      const text = document.getElementById('directText').value.trim();
+      const name = document.getElementById('directName').value.trim() || 'Documento ' + new Date().toLocaleDateString('es-AR');
+      if (!text) { showAlert('El texto está vacío', 'red'); return; }
+      const r = await api('POST', '/rag/documents', { text, name });
+      if (r?.ok) { showAlert(`✅ "${name}" agregado — ${r.chunksCount} chunks`, 'green'); document.getElementById('directText').value = ''; document.getElementById('directName').value = ''; loadDocs(); }
+      else showAlert('❌ Error: ' + (r?.error || 'desconocido'), 'red');
+    }
+
+    async function testSearch() {
+      const query = document.getElementById('searchQuery').value.trim();
+      if (!query) return;
+      const results = await api('POST', '/rag/search', { query, limit: 4 });
+      const el = document.getElementById('searchResults');
+      if (!results?.length) { el.innerHTML = '<div style="color:var(--muted);font-size:.8rem">Sin resultados</div>'; return; }
+      el.innerHTML = results.map(r => `
+        <div class="search-result">
+          <div class="search-result-text">${r.text.substring(0, 200)}${r.text.length > 200 ? '...' : ''}</div>
+          <div class="search-result-meta">Score: ${(r.score || 0).toFixed(3)} · Chunk #${r.chunk_index}</div>
+        </div>`).join('');
+    }
+
+    async function fetchNews() {
+      const btn = event.target;
+      btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Actualizando...';
+      const r = await api('POST', '/ai/news/fetch');
+      btn.disabled = false; btn.innerHTML = '<i class="fas fa-sync"></i> Actualizar noticias ahora';
+      if (r?.ok) { showAlert(`✅ ${r.fetched} noticias nuevas cargadas`, 'green'); loadStats(); }
+      else showAlert('❌ Error al actualizar noticias', 'red');
+    }
+
+    async function loadStats() {
+      const news = await api('GET', '/ai/news');
+      if (news) document.getElementById('newsCount').textContent = news.length;
+    }
+
+    // ── Init ──────────────────────────────────────────────────────────────────
+    loadConfig();
+    loadDocs();
+    loadStats();
+  </script>
+</body>
+</html>

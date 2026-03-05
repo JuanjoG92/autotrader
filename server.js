@@ -13,6 +13,7 @@ const webhookRoutes = require('./src/routes/webhook');
 const { startAllActiveBots, priceStream } = require('./src/services/bot');
 const cocosRoutes  = require('./src/routes/cocos');
 const aiRoutes     = require('./src/routes/ai');
+const ragRoutes    = require('./src/routes/rag');
 const cocos        = require('./src/services/cocos');
 const marketMonitor= require('./src/services/market-monitor');
 const aiTrader     = require('./src/services/ai-trader');
@@ -35,12 +36,14 @@ app.use('/api/user', userRoutes);
 app.use('/api/webhook', webhookRoutes);
 app.use('/api/cocos',   cocosRoutes);
 app.use('/api/ai',      aiRoutes);
+app.use('/api/rag',     ragRoutes);
 
 // ── SPA fallback ──
 app.get('/dashboard', (req, res) => res.sendFile(path.join(__dirname, 'public', 'dashboard.html')));
 app.get('/cocos',     (req, res) => res.sendFile(path.join(__dirname, 'public', 'cocos.html')));
-app.get('/login', (req, res) => res.sendFile(path.join(__dirname, 'public', 'login.html')));
-app.get('/register', (req, res) => res.sendFile(path.join(__dirname, 'public', 'register.html')));
+app.get('/rag',       (req, res) => res.sendFile(path.join(__dirname, 'public', 'rag.html')));
+app.get('/login',     (req, res) => res.sendFile(path.join(__dirname, 'public', 'login.html')));
+app.get('/register',  (req, res) => res.sendFile(path.join(__dirname, 'public', 'register.html')));
 
 // ── WebSocket: broadcast prices ──
 wss.on('connection', (ws) => {

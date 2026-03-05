@@ -130,6 +130,14 @@ function initDB() {
       max_per_trade_ars REAL DEFAULT 50000,
       min_confidence REAL DEFAULT 0.75,
       risk_level TEXT DEFAULT 'medium',
+      sectors TEXT DEFAULT 'all',
+      asset_types TEXT DEFAULT 'BOTH',
+      news_driven INTEGER DEFAULT 1,
+      news_weight REAL DEFAULT 0.5,
+      use_rag INTEGER DEFAULT 1,
+      max_positions INTEGER DEFAULT 5,
+      stop_loss_pct REAL DEFAULT 5.0,
+      take_profit_pct REAL DEFAULT 10.0,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -148,6 +156,27 @@ function initDB() {
       fetched_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
     CREATE INDEX IF NOT EXISTS idx_news_time ON news_items(published_at);
+
+    CREATE TABLE IF NOT EXISTS rag_documents (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      type TEXT DEFAULT 'txt',
+      size INTEGER DEFAULT 0,
+      chunks_count INTEGER DEFAULT 0,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS rag_chunks (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      doc_id INTEGER NOT NULL,
+      chunk_index INTEGER NOT NULL,
+      text TEXT NOT NULL,
+      embedding TEXT DEFAULT NULL,
+      keywords TEXT DEFAULT '',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (doc_id) REFERENCES rag_documents(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_chunks_doc ON rag_chunks(doc_id);
   `);
 
   console.log('Database initialized');
