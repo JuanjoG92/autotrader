@@ -129,4 +129,6 @@ Suben cuando la economía global está fuerte o hay demanda energética.
 - Protegen contra devaluación del peso
 - Se compran con pesos o dólares en brokers como Cocos Capital
 - Alto volumen = mejor liquidez = menos riesgo operativo
-- Horario mercado argentino: 11:00 a 17:00 (hora Argentina)
+- Horario operatoria Cocos Capital / BYMA: 10:30 a 17:00 (hora Argentina, lunes a viernes días hábiles)
+- Pre-apertura: 10:00 a 10:30 (solo ingreso de órdenes, sin ejecución)
+- El auto-inversor opera dentro de este horario solamente

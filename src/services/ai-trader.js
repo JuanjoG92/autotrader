@@ -27,6 +27,17 @@ const ACCIONES = new Set(['YPFD','PAMP','TGNO4','TGSU2','CEPU','GGAL','BBAR','BM
 let _analysisTimer = null;
 let _broadcastFn   = null;
 
+// Horario real operatoria Cocos Capital / BYMA: 10:30 a 17:00 ART, lunes a viernes
+function isMarketHours() {
+  const now = new Date();
+  const utc  = now.getTime() + now.getTimezoneOffset() * 60000;
+  const art  = new Date(utc - 3 * 3600000);
+  const day  = art.getDay();
+  const hhmm = art.getHours() * 100 + art.getMinutes();
+  if (day === 0 || day === 6) return false;
+  return hhmm >= 1030 && hhmm < 1700;
+}
+
 // ── Config ────────────────────────────────────────────────────────────────────
 
 function getConfig() {
@@ -147,6 +158,7 @@ async function runAnalysis() {
   try { const bp = await cocos.getBuyingPower(); buyingPower = `ARS $${(bp?.['24hs']?.ars||0).toLocaleString()} | USD $${(bp?.['24hs']?.usd||0).toFixed(2)}`; } catch {}
   try { const p = await cocos.getPortfolio(); if (p?.positions?.length) portfolio = p.positions.map(x => `${x.ticker||x.instrument_code}: ${x.quantity}uds`).join(' | '); } catch {}
   try { const ms = await cocos.getMarketStatus(); marketOpen = !!(ms?.['24hs']||ms?.CI); } catch {}
+  if (!marketOpen) marketOpen = isMarketHours();
 
   const newsInstr = cfg.news_driven !== 0
     ? `INVERSION POR NOTICIAS ACTIVADA (peso: ${Math.round((cfg.news_weight||0.5)*100)}%). Noticia positiva confirmada → BUY. Noticia negativa confirmada → SELL. Citar la noticia en reason.`

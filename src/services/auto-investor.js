@@ -18,6 +18,18 @@ const DISTRIBUTION      = [0.40, 0.35, 0.25];
 const STOP_LOSS_PCT     = 5;
 const TAKE_PROFIT_PCT   = 10;
 
+// Horario real operatoria Cocos Capital / BYMA: 10:30 a 17:00 ART, lunes a viernes
+function isMarketHours() {
+  const now = new Date();
+  // Convertir a hora Argentina (UTC-3)
+  const utc  = now.getTime() + now.getTimezoneOffset() * 60000;
+  const art  = new Date(utc - 3 * 3600000);
+  const day  = art.getDay();       // 0=dom, 6=sab
+  const hhmm = art.getHours() * 100 + art.getMinutes(); // ej 1030, 1700
+  if (day === 0 || day === 6) return false;              // fin de semana
+  return hhmm >= 1030 && hhmm < 1700;
+}
+
 const CANDIDATES = {
   'Tech/IA':           ['NVDA','TSLA','AMD','SMCI','PLTR','META','AAPL','MSFT','AMZN','GLOB'],
   'Energia/Petroleo':  ['XOM','CVX','OXY','VIST','XLE'],
@@ -173,12 +185,14 @@ async function executeAutoInvest() {
   if (!cfg.enabled) return null;
   if (!cocos.isReady()) { console.log('[AutoInvest] Cocos no conectado'); return null; }
 
-  // Mercado abierto?
+  // Mercado abierto? (API Cocos + fallback horario local 10:30-17:00 ART L-V)
   let marketOpen = false;
   try {
     const ms = await cocos.getMarketStatus();
     marketOpen = !!(ms?.['24hs'] || ms?.CI);
   } catch {}
+  // Fallback: si la API no responde, usar horario local
+  if (!marketOpen) marketOpen = isMarketHours();
   if (!marketOpen) return null;
 
   // Ya invertido hoy?
@@ -298,6 +312,7 @@ async function monitorPositions() {
 
   let marketOpen = false;
   try { const ms = await cocos.getMarketStatus(); marketOpen = !!(ms?.['24hs']||ms?.CI); } catch {}
+  if (!marketOpen) marketOpen = isMarketHours();
   if (!marketOpen) return;
 
   const positions = getActivePositions();
