@@ -53,7 +53,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
 // ── WebSocket ─────────────────────────────────────────────────────────────────
 function connectWS() {
-  const wsUrl = `ws://${location.host}/ws`;
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const wsUrl = `${proto}//${location.host}/ws`;
   _ws = new WebSocket(wsUrl);
   _ws.onmessage = (e) => {
     try {
