@@ -163,64 +163,24 @@ async function pollOnce() {
   const watchlist = getActiveWatchlist();
   const results   = [];
 
-  // ── Estrategia 1: batch por lista (funciona con mercado abierto Y cerrado) ──
-  try {
-    console.log('[Market] Iniciando batch poll...');
-    const [accR, cdrR] = await Promise.allSettled([
-      cocos.getMarketList('ACCIONES', 'LIDERES', '24hs', 'ARS', 'C', 1, 100),
-      cocos.getMarketList('CEDEARS',  'CEDEARS', '24hs', 'ARS', 'C', 1, 100),
-    ]);
-
-    console.log('[Market] accR:', accR.status, accR.status==='fulfilled' ? JSON.stringify(accR.value).substring(0,200) : accR.reason?.message);
-    console.log('[Market] cdrR:', cdrR.status, cdrR.status==='fulfilled' ? JSON.stringify(cdrR.value).substring(0,200) : cdrR.reason?.message);
-
-    const byTicker = {};
-    for (const r of [accR, cdrR]) {
-      if (r.status !== 'fulfilled') continue;
-      const items = Array.isArray(r.value) ? r.value : (r.value?.data || []);
-      for (const item of items) {
-        const tk = item.instrument_code || item.symbol || item.ticker;
-        if (tk) byTicker[tk] = item;
-      }
-    }
-
-    for (const w of watchlist) {
-      const item = byTicker[w.ticker];
-      if (!item) continue;
-      const { price, variation, volume, open, high, low } = parseItem(item);
-      if (price > 0) {
-        savePrice(w.ticker, price, variation, volume, open, high, low);
-        results.push({ ticker: w.ticker, price, variation, volume, indicators: getIndicators(w.ticker) });
-      }
-    }
-
-    if (results.length > 0) {
-      if (_broadcastFn) _broadcastFn({ type: 'market_update', data: results, timestamp: new Date().toISOString() });
-      console.log(`[Market] Batch actualizado: ${results.length} tickers`);
-      return results;
-    }
-  } catch (e) {
-    console.error('[Market] Error batch poll:', e.message);
-  }
-
-  // ── Estrategia 2: quote individual por ticker (fallback) ──
-  let debugLogged = false;
   for (const item of watchlist) {
     try {
-      const longTicker = `${item.ticker}-0002-${item.segment}-CT-${item.currency}`;
-      const quote = await cocos.getQuote(longTicker, item.segment);
-      if (!debugLogged) { console.log('[Market] Quote sample:', JSON.stringify(quote).substring(0, 400)); debugLogged = true; }
+      // getQuote con ticker simple → devuelve item del plazo 24hs
+      const quote = await cocos.getQuote(item.ticker, item.segment);
       const { price, variation, volume, open, high, low } = parseItem(quote || {});
       if (price > 0) {
         savePrice(item.ticker, price, variation, volume, open, high, low);
         results.push({ ticker: item.ticker, price, variation, volume, indicators: getIndicators(item.ticker) });
       }
-    } catch (e) { if (!debugLogged) { console.error('[Market] Quote error:', e.message); debugLogged = true; } }
-    await new Promise(r => setTimeout(r, 200));
+    } catch (e) {
+      // Silenciar errores individuales
+    }
+    await new Promise(r => setTimeout(r, 300)); // rate limit
   }
 
-  if (results.length > 0 && _broadcastFn) {
-    _broadcastFn({ type: 'market_update', data: results, timestamp: new Date().toISOString() });
+  if (results.length > 0) {
+    console.log(`[Market] Actualizado: ${results.length} tickers con precio`);
+    if (_broadcastFn) _broadcastFn({ type: 'market_update', data: results, timestamp: new Date().toISOString() });
   }
   return results;
 }

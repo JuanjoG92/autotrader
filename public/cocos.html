@@ -711,7 +711,7 @@ document.addEventListener('DOMContentLoaded', () => {
     console.log('[DEBUG] Cocos API debug result:');
     for (const [k,v] of Object.entries(d||{})) {
       if (v?.ERROR) console.error(`  ${k}: ERROR →`, v.ERROR);
-      else console.log(`  ${k}: OK →`, JSON.stringify(v).substring(0,300));
+      else console.log(`  ${k}: OK →`, typeof v === 'object' ? v : JSON.stringify(v).substring(0,500));
     }
   })();
 });

@@ -209,29 +209,25 @@ async function searchTicker(q) {
 }
 
 async function getQuote(ticker, segment) {
-  // Primero intentar con el ticker simple (sin long format)
+  // La API acepta solo el ticker simple (GGAL, no GGAL-0002-C-CT-ARS)
+  // y devuelve un ARRAY con todos los plazos
   const simpleTicker = ticker.includes('-') ? ticker.split('-')[0] : ticker;
-  try {
-    return await _call('GET', `api/v1/markets/tickers/${encodeURIComponent(simpleTicker)}?segment=${segment || 'C'}&settlement_days=0002&currency=ARS`);
-  } catch {
-    // Fallback con long ticker
-    return await _call('GET', `api/v1/markets/tickers/${encodeURIComponent(ticker)}?segment=${segment || 'C'}`);
+  const results = await _call('GET', `api/v1/markets/tickers/${encodeURIComponent(simpleTicker)}?segment=${segment || 'C'}`);
+  if (Array.isArray(results)) {
+    return results.find(r => r.long_ticker && r.long_ticker.includes('-0002-')) || results[0] || {};
   }
+  return results;
 }
 
 async function getMarketList(type, subtype, settlement, currency, segment, page, size) {
+  // getMarketList con pagination no funciona en la API actual de Cocos
+  // Usar getQuote individual por ticker como alternativa
   const s   = SETTLEMENT_MAP[settlement] || '0002';
   const c   = CURRENCY_MAP[currency]     || 'ARS';
   const seg = segment || 'C';
   const pg  = page    || 1;
-  const sz  = Math.min(size || 50, 50); // Cocos max 50 por página
-
-  // Intentar con subtype primero, si falla sin subtype
-  try {
-    return await _call('GET', `api/v1/markets/tickers/?instrument_type=${type}&instrument_subtype=${subtype}&settlement_days=${s}&currency=${c}&segment=${seg}&page=${pg}&size=${sz}`);
-  } catch {
-    return await _call('GET', `api/v1/markets/tickers/?instrument_type=${type}&settlement_days=${s}&currency=${c}&segment=${seg}&page=${pg}&size=${sz}`);
-  }
+  const sz  = Math.min(size || 50, 50);
+  return _call('GET', `api/v1/markets/tickers/?instrument_type=${type}&instrument_subtype=${subtype}&settlement_days=${s}&currency=${c}&segment=${seg}&page=${pg}&size=${sz}`);
 }
 
 // ── Cuenta ────────────────────────────────────────────────────────────────────
