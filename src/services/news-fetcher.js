@@ -43,25 +43,29 @@ const SECTOR_KEYWORDS = {
 
 function parseRSS(xml) {
   const items = [];
-  const itemRx = /<item[^>]*>([\s\S]*?)<\/item>/gi;
-  let match;
-  while ((match = itemRx.exec(xml)) !== null) {
-    const block = match[1];
-    const title   = strip(extract(block, 'title'));
-    const desc    = strip(extract(block, 'description'));
-    const link    = strip(extract(block, 'link'));
-    const pubDate = strip(extract(block, 'pubDate'));
+  // Split by <item> más robusto
+  const parts = xml.split(/<item[\s>]/i);
+  for (let i = 1; i < parts.length; i++) {
+    const block = parts[i].split(/<\/item>/i)[0];
+    const title   = strip(extractTag(block, 'title'));
+    const desc    = strip(extractTag(block, 'description'));
+    const link    = strip(extractTag(block, 'link')).replace(/^https?:/, '').replace(/^\s+|\s+$/g, '');
     if (title && title.length > 5) {
-      items.push({ title, summary: desc.substring(0, 300), url: link, pubDate });
+      items.push({ title, summary: desc.substring(0, 300), url: link });
     }
   }
   return items;
 }
 
-function extract(text, tag) {
-  const rx = new RegExp(`<${tag}[^>]*>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/${tag}>`, 'i');
-  const m = text.match(rx);
-  return m ? m[1] : '';
+function extractTag(text, tag) {
+  // Maneja CDATA y texto plano
+  const cdata = new RegExp(`<${tag}[^>]*>\\s*<!\\[CDATA\\[([\\s\\S]*?)\\]\\]>`, 'i');
+  const plain = new RegExp(`<${tag}[^>]*>([^<]*)<\/${tag}>`, 'i');
+  const mc = text.match(cdata);
+  if (mc) return mc[1];
+  const mp = text.match(plain);
+  if (mp) return mp[1];
+  return '';
 }
 
 function strip(html) {
