@@ -81,6 +81,8 @@ function createExchange(apiKeyRow) {
       ...config.options,
       defaultType: 'spot',
       adjustForTimeDifference: true,
+      fetchCurrencies: false,
+      recvWindow: 60000,
     };
     if (process.env.BINANCE_PROXY) {
       const proxy = process.env.BINANCE_PROXY;
@@ -116,7 +118,8 @@ function getExchangeForUser(userId, apiKeyId) {
 
 async function getBalances(userId, apiKeyId) {
   const exchange = getExchangeForUser(userId, apiKeyId);
-  const balance = await exchange.fetchBalance();
+  exchange.options.fetchCurrencies = false;
+  const balance = await exchange.fetchBalance({ type: 'spot' });
   const assets = {};
   for (const [coin, info] of Object.entries(balance.total)) {
     if (info > 0) assets[coin] = { total: info, free: balance.free[coin] || 0, used: balance.used[coin] || 0 };
@@ -196,8 +199,9 @@ async function createOrder(userId, apiKeyId, pair, side, amount) {
 
 async function testConnection(userId, apiKeyId) {
   const exchange = getExchangeForUser(userId, apiKeyId);
+  exchange.options.fetchCurrencies = false;
   try {
-    const balance = await exchange.fetchBalance();
+    const balance = await exchange.fetchBalance({ type: 'spot' });
     return { success: true, totalAssets: Object.keys(balance.total).filter(k => balance.total[k] > 0).length };
   } catch (e) {
     const msg = e.message || '';
@@ -260,21 +264,67 @@ async function getFirstBinanceBalance() {
   const db = getDB();
   const row = db.prepare("SELECT * FROM api_keys WHERE exchange = 'binance' LIMIT 1").get();
   if (!row) return null;
+
+  // Method 1: ccxt fetchBalance (spot only, no SAPI)
   try {
     const exchange = createExchange(row);
-    const balance = await exchange.fetchBalance();
+    exchange.options.fetchCurrencies = false;
+    const balance = await exchange.fetchBalance({ type: 'spot' });
     const assets = {};
     for (const [coin, info] of Object.entries(balance.total)) {
       if (info > 0) assets[coin] = { total: info, free: balance.free[coin] || 0, used: balance.used[coin] || 0 };
     }
     return assets;
-  } catch (e) {
-    const msg = e.message || '';
-    if (msg.includes('-2008') || msg.includes('Invalid Api-Key')) {
-      throw new Error('API Key de Binance inválida o expirada. Actualizala desde la página de Binance.');
-    }
-    throw e;
+  } catch (e1) {
+    console.log('[Binance] ccxt fetchBalance failed:', (e1.message || '').substring(0, 120));
   }
+
+  // Method 2: Direct signed HTTP to /api/v3/account
+  try {
+    return await _directBalance(row);
+  } catch (e2) {
+    console.log('[Binance] direct balance failed:', (e2.message || '').substring(0, 120));
+    throw new Error('No se pudo obtener balance de Binance: ' + (e2.message || '').substring(0, 100));
+  }
+}
+
+async function _directBalance(apiKeyRow) {
+  const crypto = require('crypto');
+  const apiKey = decrypt(apiKeyRow.api_key_enc);
+  const secret = decrypt(apiKeyRow.api_secret_enc);
+  const ts = Date.now();
+  const params = 'timestamp=' + ts + '&recvWindow=60000';
+  const sig = crypto.createHmac('sha256', secret).update(params).digest('hex');
+  const url = 'https://api.binance.com/api/v3/account?' + params + '&signature=' + sig;
+
+  return new Promise((resolve, reject) => {
+    const reqOpts = {
+      headers: { 'X-MBX-APIKEY': apiKey },
+    };
+    // Use SOCKS proxy if configured
+    if (process.env.BINANCE_PROXY && process.env.BINANCE_PROXY.startsWith('socks')) {
+      const proxyUrl = process.env.BINANCE_PROXY.replace('socks5h://', 'socks5://');
+      reqOpts.agent = new SocksProxyAgent(proxyUrl);
+    }
+    https.get(url, reqOpts, (res) => {
+      let data = '';
+      res.on('data', (c) => { data += c; });
+      res.on('end', () => {
+        try {
+          const j = JSON.parse(data);
+          if (j.code) return reject(new Error('Binance: ' + j.msg + ' (' + j.code + ')'));
+          const assets = {};
+          for (const b of (j.balances || [])) {
+            const free = parseFloat(b.free || 0);
+            const locked = parseFloat(b.locked || 0);
+            const total = free + locked;
+            if (total > 0) assets[b.asset] = { total, free, used: locked };
+          }
+          resolve(assets);
+        } catch (e) { reject(e); }
+      });
+    }).on('error', reject);
+  });
 }
 
 module.exports = { getBalances, getTicker, getOHLCV, createOrder, testConnection, getExchangeForUser, getTopPairs, getFirstBinanceBalance, resaveApiKey, SUPPORTED_EXCHANGES };

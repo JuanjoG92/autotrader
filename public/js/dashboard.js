@@ -64,12 +64,16 @@
       pnlIcon.className = 'stat-icon ' + (pnl >= 0 ? 'green' : 'red');
 
       // Binance balance
-      if (cryptoBalance && cryptoBalance.USDT) {
-        document.getElementById('binanceBalance').textContent = '$' + formatNum(cryptoBalance.USDT.free);
-      } else if (cryptoBalance === null) {
-        document.getElementById('binanceBalance').textContent = 'Sin key';
+      const balEl = document.getElementById('binanceBalance');
+      if (cryptoBalance && typeof cryptoBalance === 'object' && !cryptoBalance.error) {
+        if (cryptoBalance.USDT) {
+          balEl.textContent = '$' + formatNum(cryptoBalance.USDT.free || cryptoBalance.USDT.total || 0);
+        } else {
+          const total = Object.values(cryptoBalance).reduce((s, a) => s + (a.total || 0), 0);
+          balEl.textContent = total > 0 ? '$' + formatNum(total) : '$0.00';
+        }
       } else {
-        document.getElementById('binanceBalance').textContent = '$0.00';
+        balEl.textContent = cryptoBalance?.error ? 'Error' : 'Sin datos';
       }
 
       // Crypto AI status

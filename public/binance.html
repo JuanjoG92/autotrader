@@ -226,7 +226,7 @@
       <div class="market-header">
         <h2><i class="fas fa-chart-bar" style="color:var(--amber)"></i> Mercado Crypto</h2>
         <div style="display:flex;gap:.5rem">
-          <button class="btn btn-sm btn-ghost" onclick="loadMarket()" title="Actualizar"><i class="fas fa-sync-alt"></i></button>
+          <button class="btn btn-sm btn-ghost" onclick="loadMarket()" title="Actualizar"><i class="fas fa-sync-alt" id="syncIcon"></i></button>
         </div>
       </div>
       <div class="market-table-wrap">
@@ -471,7 +471,8 @@ function renderMarket() {
       <td>$${fmt(p.low, p.low>100?2:4)}</td>
       <td style="text-align:right">
         <div class="action-btns" style="justify-content:flex-end">
-          <button class="btn btn-sm btn-green" onclick="quickOrder('${p.symbol}')"><i class="fas fa-bolt"></i></button>
+          <button class="btn btn-sm btn-ghost" onclick="analyzeSymbol('${p.symbol}')" title="Análisis IA"><i class="fas fa-brain" style="color:var(--purple)"></i></button>
+          <button class="btn btn-sm btn-green" onclick="quickOrder('${p.symbol}')" title="Comprar"><i class="fas fa-bolt"></i></button>
         </div>
       </td>
     </tr>`;
@@ -570,6 +571,24 @@ async function updateApiKey() {
     document.getElementById('newApiSecret').value = '';
   }
   loadBalance();
+}
+
+// ── Analyze single symbol ──
+async function analyzeSymbol(symbol) {
+  const anlBox = document.getElementById('aiAnalysis');
+  anlBox.textContent = '🔄 Analizando ' + symbol + '...';
+  const r = await api('POST', '/crypto/analyze', { symbol });
+  if (!r || r.error) { anlBox.textContent = '❌ Error: ' + (r?.error||'desconocido'); return; }
+  if (r.result) {
+    _lastAnalysis = r.result;
+    anlBox.textContent = r.result.analysis || 'Análisis completado';
+    const sent = r.result.market_sentiment || 'NEUTRAL';
+    const colors = { BULLISH:'var(--green)', BEARISH:'var(--red)', NEUTRAL:'var(--amber)' };
+    document.getElementById('aiSentiment').style.color = colors[sent] || 'var(--amber)';
+    document.getElementById('aiSentiment').textContent = sent;
+    renderSignals(r.result.signals ? [{symbol}] : []);
+  }
+  loadPositions(); loadHistory();
 }
 
 // ── WebSocket ──
