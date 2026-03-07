@@ -219,7 +219,7 @@ function initDB() {
       risk_level TEXT DEFAULT 'medium',
       stop_loss_pct REAL DEFAULT 3.0,
       take_profit_pct REAL DEFAULT 6.0,
-      analysis_interval_min INTEGER DEFAULT 3,
+      analysis_interval_min INTEGER DEFAULT 15,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -241,6 +241,11 @@ function initDB() {
     );
     CREATE INDEX IF NOT EXISTS idx_crypto_pos_status ON crypto_positions(status);
   `);
+
+  // Migrar intervalo de análisis de 3 a 15 min (optimización costo OpenAI)
+  try {
+    conn.prepare("UPDATE crypto_config SET analysis_interval_min = 15 WHERE analysis_interval_min = 3").run();
+  } catch {}
 
   console.log('Database initialized');
 }

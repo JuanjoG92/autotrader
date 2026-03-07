@@ -6,7 +6,6 @@ const { getDB }          = require('../models/db');
 const { getOpenAIToken } = require('./ai-token');
 const { getBalances, getTicker, getTopPairs, createOrder, getExchangeForUser } = require('./binance');
 const news               = require('./news-fetcher');
-const rag                = require('./rag');
 
 const OPENAI_MODEL = 'gpt-4o-mini';
 
@@ -19,6 +18,8 @@ let _timer = null;
 let _monitorTimer = null;
 let _broadcastFn = null;
 let _lastAnalysis = null; // Last AI analysis for dashboard
+let _lastMarketPrices = {}; // Cache: últimos precios para detectar cambios
+let _cacheSkips = 0;        // Counter de análisis salteados por cache
 
 // ── Config DB ─────────────────────────────────────────────────────────────────
 
@@ -69,16 +70,33 @@ function getPositionHistory(limit) {
 
 async function getMarketData() {
   const rows = [];
+  const prices = {};
   for (const pair of TOP_CRYPTOS) {
     try {
       const t = await getTicker(pair);
       if (t && t.last > 0) {
+        prices[pair] = t.last;
         rows.push(`${pair}: $${t.last.toFixed(2)} | 24h: ${t.percentage >= 0 ? '+' : ''}${t.percentage.toFixed(1)}% | Vol: $${Math.round(t.quoteVolume / 1e6)}M`);
       }
     } catch {}
     await new Promise(r => setTimeout(r, 200));
   }
-  return rows.join('\n') || 'Sin datos de mercado.';
+  return { text: rows.join('\n') || 'Sin datos de mercado.', prices };
+}
+
+// ── Cache: detectar si el mercado cambió lo suficiente ────────────────────────
+
+function _marketChangedEnough(currentPrices) {
+  const lastKeys = Object.keys(_lastMarketPrices);
+  if (!lastKeys.length) return true; // Primera vez
+
+  for (const [symbol, price] of Object.entries(currentPrices)) {
+    const prev = _lastMarketPrices[symbol];
+    if (!prev) return true; // Par nuevo
+    const changePct = Math.abs((price - prev) / prev) * 100;
+    if (changePct >= 1.0) return true; // Algún par cambió >1%
+  }
+  return false; // Nada cambió significativamente
 }
 
 // ── Binance helpers ───────────────────────────────────────────────────────────
@@ -158,17 +176,23 @@ async function runAnalysis() {
   console.log('[Crypto] Iniciando análisis...');
 
   // Datos de mercado
-  const marketCtx = await getMarketData();
+  const { text: marketCtx, prices: currentPrices } = await getMarketData();
 
-  // Noticias crypto
+  // Cache: si el mercado no cambió >1% en ningún par, saltar análisis
+  const hasOpenPositions = getOpenPositions().length > 0;
+  if (!_marketChangedEnough(currentPrices) && !hasOpenPositions) {
+    _cacheSkips++;
+    console.log(`[Crypto] ⏭️ Mercado sin cambios significativos — skip OpenAI (${_cacheSkips} skips acumulados)`);
+    return _lastAnalysis; // Devolver último análisis
+  }
+  _lastMarketPrices = { ...currentPrices }; // Actualizar cache
+
+  // Noticias crypto (8 más recientes para ahorrar tokens)
   const cryptoTickers = ['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'CRYPTO'];
-  const newsItems = news.getNewsForTickers(cryptoTickers, 15);
+  const newsItems = news.getNewsForTickers(cryptoTickers, 8);
   const newsCtx = newsItems.length
     ? newsItems.map(n => `[${n.source}] ${n.title}`).join('\n')
     : 'Sin noticias crypto recientes.';
-
-  // RAG
-  const ragCtx = await rag.buildRAGContext('bitcoin ethereum crypto trading strategy risk');
 
   // Posiciones abiertas
   const positions = getOpenPositions();
@@ -193,51 +217,29 @@ async function runAnalysis() {
   // Smart position sizing: 15-25% of available capital per trade, min $5
   const positionSize = Math.max(5, Math.min(availableUSDT * 0.20, availableUSDT - 2));
 
-  const prompt = `ANÁLISIS CRYPTO TRADING PROFESIONAL — Binance Spot 24/7
+  // Prompt compacto para reducir tokens
+  const prompt = `CRYPTO TRADING — Binance Spot
 
-Eres un trader institucional de Wall Street. Tu objetivo: maximizar retornos con gestión de riesgo profesional.
-
-MERCADO CRYPTO ACTUAL:
+MERCADO:
 ${marketCtx}
 
-BALANCE REAL: ${balanceCtx}
-CAPITAL DISPONIBLE POR OPERACIÓN: ~$${positionSize.toFixed(0)} USD (20% del capital libre)
-RIESGO: ${cfg.risk_level} | STOP-LOSS: ${cfg.stop_loss_pct}% | TAKE-PROFIT: ${cfg.take_profit_pct}%
+BALANCE: ${balanceCtx} | Operación: ~$${positionSize.toFixed(0)} | Riesgo: ${cfg.risk_level} | SL:${cfg.stop_loss_pct}% TP:${cfg.take_profit_pct}%
 
-POSICIONES ABIERTAS:
-${posCtx}
+POSICIONES: ${posCtx}
 
-NOTICIAS CRYPTO RECIENTES:
-${newsCtx}
-${ragCtx ? `\nCONTEXTO ESTRATÉGICO:\n${ragCtx}` : ''}
+NOTICIAS: ${newsCtx}
 
-REGLAS DE TRADING PROFESIONAL:
-1. COMISIÓN Binance: 0.1% por operación (compra + venta = 0.2% round-trip). Solo operar si el movimiento esperado supera 0.5% mínimo
-2. NO hacer overtrading: solo operar con señales CLARAS y fundamentos sólidos
-3. Si no hay oportunidad clara, generar señales HOLD con razón
-4. Position sizing: respetar el capital disponible, nunca usar más del 25% en una sola operación
-5. Solo pares /USDT en Binance Spot: BTC, ETH, BNB, SOL, XRP, ADA, DOGE, AVAX, LINK, DOT
-6. Comprar en caídas con fundamentos, vender en picos o cuando el momentum se agota
-7. No comprar lo que ya tenemos abierto
-8. SELL si una posición abierta muestra debilidad técnica o fundamentales negativos
-9. Confidence: 0.60-0.95 (BUY/SELL solo si > 0.75)
-10. Considerar: tendencia 24h, volumen vs promedio, noticias, correlación BTC
-11. En cada señal incluir "amount_usd" con el monto sugerido en USD
+REGLAS: Comisión 0.2% round-trip (operar solo si >0.5%). No overtrading. HOLD si no hay oportunidad clara. Max 25% capital/operación. Solo /USDT Spot. No comprar duplicados. SELL si debilidad. Confidence 0.60-0.95 (ejecutar >0.75). Incluir amount_usd.
 
-RESPONDE SOLO JSON:
-{
-  "signals": [{"symbol":"BTC/USDT","action":"BUY|SELL|HOLD","confidence":0.82,"amount_usd":10,"reason":"Razón detallada"}],
-  "analysis": "Resumen ejecutivo: qué está pasando en el mercado y por qué estas decisiones",
-  "market_sentiment": "BULLISH|BEARISH|NEUTRAL",
-  "watchlist": ["ETH/USDT","SOL/USDT"]
-}`;
+JSON:
+{"signals":[{"symbol":"BTC/USDT","action":"BUY|SELL|HOLD","confidence":0.82,"amount_usd":10,"reason":"..."}],"analysis":"resumen breve","market_sentiment":"BULLISH|BEARISH|NEUTRAL","watchlist":["ETH/USDT"]}`;
 
   try {
     const res = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
       body: JSON.stringify({
-        model: OPENAI_MODEL, temperature: 0.2, max_tokens: 1500,
+        model: OPENAI_MODEL, temperature: 0.2, max_tokens: 800,
         messages: [
           { role: 'system', content: 'Eres un trader de criptomonedas experto. Analizas mercado + noticias para generar señales de trading. Conservador. JSON válido siempre.' },
           { role: 'user', content: prompt },
@@ -443,7 +445,7 @@ async function _executeSellPosition(cfg, pos, reason) {
 function init(broadcastFn) {
   _broadcastFn = broadcastFn;
   const cfg = getConfig();
-  const intervalMs = (cfg.analysis_interval_min || 3) * 60 * 1000;
+  const intervalMs = (cfg.analysis_interval_min || 15) * 60 * 1000;
 
   if (_timer) clearInterval(_timer);
   if (_monitorTimer) clearInterval(_monitorTimer);
@@ -456,7 +458,7 @@ function init(broadcastFn) {
     try { await monitorPositions(); } catch (e) { console.error('[Crypto] Monitor:', e.message); }
   }, 30 * 1000);
 
-  console.log(`[Crypto] AI Trader iniciado — análisis cada ${cfg.analysis_interval_min || 3} min, monitor cada 30s`);
+  console.log(`[Crypto] AI Trader iniciado — análisis cada ${cfg.analysis_interval_min || 15} min, monitor cada 30s`);
 
   // Primer análisis tras 20s
   setTimeout(async () => {
