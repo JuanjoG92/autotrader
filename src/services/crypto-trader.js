@@ -6,6 +6,7 @@ const { getDB }          = require('../models/db');
 const { getOpenAIToken } = require('./ai-token');
 const { getBalances, getTicker, getTopPairs, createOrder, getExchangeForUser } = require('./binance');
 const news               = require('./news-fetcher');
+const rag                = require('./rag');
 
 const OPENAI_MODEL = 'gpt-4o-mini';
 
@@ -66,21 +67,48 @@ function getPositionHistory(limit) {
   return getDB().prepare('SELECT * FROM crypto_positions ORDER BY created_at DESC LIMIT ?').all(limit || 30);
 }
 
-// ── Datos de mercado ──────────────────────────────────────────────────────────
+// ── Datos de mercado (batch: 1 sola llamada a Binance) ───────────────────────
 
-async function getMarketData() {
+async function getMarketData(cfg) {
   const rows = [];
   const prices = {};
-  for (const pair of TOP_CRYPTOS) {
-    try {
-      const t = await getTicker(pair);
-      if (t && t.last > 0) {
-        prices[pair] = t.last;
-        rows.push(`${pair}: $${t.last.toFixed(2)} | 24h: ${t.percentage >= 0 ? '+' : ''}${t.percentage.toFixed(1)}% | Vol: $${Math.round(t.quoteVolume / 1e6)}M`);
+
+  // Intentar batch (1 call en vez de 10 secuenciales — ahorra ~10s)
+  try {
+    const keyInfo = _getApiKeyInfo(cfg);
+    let exchange;
+    if (keyInfo) {
+      exchange = getExchangeForUser(keyInfo.user_id, keyInfo.id);
+    }
+    // getTopPairs ya usa fetchTickers batch
+    const topData = await getTopPairs();
+    if (topData && topData.length > 0) {
+      for (const pair of TOP_CRYPTOS) {
+        const t = topData.find(d => d.symbol === pair);
+        if (t && t.price > 0) {
+          prices[pair] = t.price;
+          rows.push(`${pair}: $${t.price.toFixed(2)} | 24h: ${t.change24h >= 0 ? '+' : ''}${t.change24h.toFixed(1)}% | Vol: $${Math.round(t.volume / 1e6)}M`);
+        }
       }
-    } catch {}
-    await new Promise(r => setTimeout(r, 200));
+    }
+  } catch (e) {
+    console.warn('[Crypto] Batch tickers falló, usando secuencial:', e.message?.substring(0, 60));
   }
+
+  // Fallback secuencial si batch falló
+  if (!rows.length) {
+    for (const pair of TOP_CRYPTOS) {
+      try {
+        const t = await getTicker(pair);
+        if (t && t.last > 0) {
+          prices[pair] = t.last;
+          rows.push(`${pair}: $${t.last.toFixed(2)} | 24h: ${t.percentage >= 0 ? '+' : ''}${t.percentage.toFixed(1)}% | Vol: $${Math.round(t.quoteVolume / 1e6)}M`);
+        }
+      } catch {}
+      await new Promise(r => setTimeout(r, 200));
+    }
+  }
+
   return { text: rows.join('\n') || 'Sin datos de mercado.', prices };
 }
 
@@ -175,46 +203,55 @@ async function runAnalysis() {
 
   console.log('[Crypto] Iniciando análisis...');
 
-  // Datos de mercado
-  const { text: marketCtx, prices: currentPrices } = await getMarketData();
+  const t0 = Date.now();
 
-  // Cache: si el mercado no cambió >1% en ningún par, saltar análisis
+  // ── Paso 1: Fetch paralelo (mercado + balance + RAG al mismo tiempo) ──
+  const keyInfo = _getApiKeyInfo(cfg);
+  const [marketResult, balanceResult, ragCtx] = await Promise.all([
+    getMarketData(cfg),
+    (async () => {
+      try {
+        if (!keyInfo) return null;
+        return await getBalances(keyInfo.user_id, keyInfo.id);
+      } catch { return null; }
+    })(),
+    // RAG con keywords (NO usa embeddings/OpenAI, es gratis)
+    rag.buildRAGContext('crypto trading strategy bitcoin risk management').catch(() => ''),
+  ]);
+
+  const { text: marketCtx, prices: currentPrices } = marketResult;
+  console.log(`[Crypto] Datos obtenidos en ${Date.now() - t0}ms (paralelo)`);
+
+  // ── Paso 2: Cache — si nada cambió >1%, saltar OpenAI ──
   const hasOpenPositions = getOpenPositions().length > 0;
   if (!_marketChangedEnough(currentPrices) && !hasOpenPositions) {
     _cacheSkips++;
-    console.log(`[Crypto] ⏭️ Mercado sin cambios significativos — skip OpenAI (${_cacheSkips} skips acumulados)`);
-    return _lastAnalysis; // Devolver último análisis
+    console.log(`[Crypto] ⏭️ Mercado sin cambios — skip OpenAI (${_cacheSkips} skips)`);
+    return _lastAnalysis;
   }
-  _lastMarketPrices = { ...currentPrices }; // Actualizar cache
+  _lastMarketPrices = { ...currentPrices };
 
-  // Noticias crypto (8 más recientes para ahorrar tokens)
+  // ── Paso 3: Armar contexto (ya tenemos todo, sin esperar) ──
   const cryptoTickers = ['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'CRYPTO'];
   const newsItems = news.getNewsForTickers(cryptoTickers, 8);
   const newsCtx = newsItems.length
     ? newsItems.map(n => `[${n.source}] ${n.title}`).join('\n')
     : 'Sin noticias crypto recientes.';
 
-  // Posiciones abiertas
   const positions = getOpenPositions();
   const posCtx = positions.length
     ? positions.map(p => `${p.symbol}: ${p.quantity} @ $${p.entry_price} (SL:$${p.stop_loss} TP:$${p.take_profit})`).join('\n')
     : 'Sin posiciones abiertas.';
 
-  // Balance real
   let balanceCtx = 'USDT libre: $0 (sin conexión)';
   let availableUSDT = 0;
-  try {
-    const keyInfo = _getApiKeyInfo(cfg);
-    if (keyInfo) {
-      const bal = await getBalances(keyInfo.user_id, keyInfo.id);
-      availableUSDT = bal.USDT?.free || 0;
-      const entries = Object.entries(bal).filter(([k, v]) => v.total > 0 && k !== 'USDT').slice(0, 5);
-      balanceCtx = `USDT libre: $${availableUSDT.toFixed(2)}`;
-      if (entries.length) balanceCtx += ' | ' + entries.map(([k, v]) => `${k}: ${v.total}`).join(', ');
-    }
-  } catch { /* usar balance paper */ }
+  if (balanceResult) {
+    availableUSDT = balanceResult.USDT?.free || 0;
+    const entries = Object.entries(balanceResult).filter(([k, v]) => v.total > 0 && k !== 'USDT').slice(0, 5);
+    balanceCtx = `USDT libre: $${availableUSDT.toFixed(2)}`;
+    if (entries.length) balanceCtx += ' | ' + entries.map(([k, v]) => `${k}: ${v.total}`).join(', ');
+  }
 
-  // Smart position sizing: 15-25% of available capital per trade, min $5
   const positionSize = Math.max(5, Math.min(availableUSDT * 0.20, availableUSDT - 2));
 
   // Prompt compacto para reducir tokens
@@ -228,7 +265,7 @@ BALANCE: ${balanceCtx} | Operación: ~$${positionSize.toFixed(0)} | Riesgo: ${cf
 POSICIONES: ${posCtx}
 
 NOTICIAS: ${newsCtx}
-
+${ragCtx ? `\nESTRATEGIA (RAG): ${ragCtx.substring(0, 500)}` : ''}
 REGLAS: Comisión 0.2% round-trip (operar solo si >0.5%). No overtrading. HOLD si no hay oportunidad clara. Max 25% capital/operación. Solo /USDT Spot. No comprar duplicados. SELL si debilidad. Confidence 0.60-0.95 (ejecutar >0.75). Incluir amount_usd.
 
 JSON:
