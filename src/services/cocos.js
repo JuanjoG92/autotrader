@@ -18,27 +18,75 @@ let _timer = null;
 let _ready = false;
 let _loginInProgress = false;
 
-// ── Browser persistente ─────────────────────────────────────────────────────
+// ── Browser persistente (mutex + auto-recovery) ────────────────────────────
 let _browser = null;
 let _page = null;
+let _browserLock = null;
+
+function _killZombieChrome() {
+  try {
+    require('child_process').execSync(
+      'pkill -f "chrome.*--headless" 2>/dev/null; pkill -f "chrome_crashpad" 2>/dev/null',
+      { timeout: 5000, stdio: 'ignore' }
+    );
+  } catch {}
+}
 
 async function _ensureBrowser() {
   if (_page && _browser?.isConnected()) return _page;
+  if (_browserLock) return _browserLock;
+  _browserLock = _launchBrowser();
+  try { return await _browserLock; }
+  finally { _browserLock = null; }
+}
+
+async function _launchBrowser() {
   if (_browser) try { await _browser.close(); } catch {}
+  _browser = null;
+  _page = null;
+  _killZombieChrome();
 
   const puppeteer = require('puppeteer');
   console.log('[Cocos] Iniciando Chrome headless...');
   _browser = await puppeteer.launch({
     headless: 'new',
-    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu'],
+    args: [
+      '--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage',
+      '--disable-gpu', '--disable-extensions', '--disable-background-networking',
+      '--no-first-run', '--disable-translate',
+      '--js-flags=--max-old-space-size=256',
+    ],
   });
+
   _page = await _browser.newPage();
   await _page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36');
 
+  // Cerrar tabs extras que Puppeteer crea
+  const pages = await _browser.pages();
+  for (const p of pages) { if (p !== _page) await p.close().catch(() => {}); }
+
+  // Navegar con retry para Cloudflare
   console.log('[Cocos] Resolviendo Cloudflare...');
-  await _page.goto(BASE_URL, { waitUntil: 'networkidle0', timeout: 60000 });
-  console.log('[Cocos] Chrome listo');
-  return _page;
+  for (let i = 1; i <= 5; i++) {
+    try {
+      await _page.goto(BASE_URL, { waitUntil: 'networkidle0', timeout: 30000 });
+      const html = await _page.content();
+      if (html.includes('Just a moment') || html.includes('challenge-platform')) {
+        const wait = 5000 + i * 3000;
+        console.log(`[Cocos] Cloudflare challenge (intento ${i}/5), esperando ${Math.round(wait/1000)}s...`);
+        await new Promise(r => setTimeout(r, wait));
+        continue;
+      }
+      console.log('[Cocos] Chrome listo');
+      return _page;
+    } catch (e) {
+      if (i === 5) throw new Error('Cloudflare bloqueó tras 5 intentos');
+      const wait = 5000 + i * 3000;
+      console.log(`[Cocos] Cloudflare retry ${i}/5, esperando ${Math.round(wait/1000)}s...`);
+      await new Promise(r => setTimeout(r, wait));
+    }
+  }
+  throw new Error('Cloudflare bloqueó la request tras 5 intentos');
 }
 
 // ── DB ──────────────────────────────────────────────────────────────────────
@@ -75,41 +123,62 @@ function _saveSession(access, refresh, expiresAt, accountId) {
 
 // ── HTTP (todo va por el browser) ───────────────────────────────────────────
 
-async function _call(method, path, body) {
+async function _call(method, path, body, _retried) {
   const token = _session.accessToken;
   if (!token) throw new Error('Sin sesión Cocos activa');
 
-  const page = await _ensureBrowser();
-  const result = await page.evaluate(async (m, url, b, t, ak, aid) => {
-    try {
-      const r = await fetch(url, {
-        method: m,
-        headers: {
-          'Content-Type': 'application/json',
-          'apikey': ak,
-          'Authorization': 'Bearer ' + t,
-          'x-account-id': String(aid),
-        },
-        body: b ? JSON.stringify(b) : undefined,
-      });
-      const text = await r.text();
-      let data;
-      try { data = JSON.parse(text); } catch { data = { raw: text.substring(0, 300) }; }
-      return { ok: r.ok, status: r.status, data };
-    } catch (err) {
-      return { ok: false, status: 0, data: { error: err.message } };
+  let page;
+  try {
+    page = await _ensureBrowser();
+  } catch (e) {
+    if (!_retried) {
+      console.warn('[Cocos] Browser no disponible, relanzando...');
+      _browser = null; _page = null;
+      return _call(method, path, body, true);
     }
-  }, method, `${BASE_URL}/${path}`, body || null, token, ANON_KEY, _session.accountId);
+    throw e;
+  }
+
+  let result;
+  try {
+    result = await page.evaluate(async (m, url, b, t, ak, aid) => {
+      try {
+        const r = await fetch(url, {
+          method: m,
+          headers: {
+            'Content-Type': 'application/json',
+            'apikey': ak,
+            'Authorization': 'Bearer ' + t,
+            'x-account-id': String(aid),
+          },
+          body: b ? JSON.stringify(b) : undefined,
+        });
+        const text = await r.text();
+        let data;
+        try { data = JSON.parse(text); } catch { data = { raw: text.substring(0, 300) }; }
+        return { ok: r.ok, status: r.status, data };
+      } catch (err) {
+        return { ok: false, status: 0, data: { error: err.message } };
+      }
+    }, method, `${BASE_URL}/${path}`, body || null, token, ANON_KEY, _session.accountId);
+  } catch (e) {
+    if (!_retried) {
+      console.warn('[Cocos] Browser crash, reintentando...', e.message.substring(0, 60));
+      _browser = null; _page = null;
+      return _call(method, path, body, true);
+    }
+    throw new Error('Browser crash: ' + e.message.substring(0, 100));
+  }
 
   if (!result.ok) {
     const msg = result.data?.message || result.data?.error || `HTTP ${result.status}`;
 
-    if ((result.status === 401 || result.status === 403) &&
+    if (!_retried && (result.status === 401 || result.status === 403) &&
         (msg.includes('ssurance') || msg.includes('upgrade') || msg.includes('jwt expired'))) {
       console.log(`[Cocos] ${msg} — re-login automático...`);
       try {
         await _browserLogin();
-        return _call(method, path, body);
+        return _call(method, path, body, true);
       } catch (e) {
         console.error('[Cocos] Re-login falló:', e.message);
       }
@@ -290,7 +359,30 @@ async function init() {
   console.warn('[Cocos] Sin sesión activa');
 }
 
-process.on('exit', () => { if (_browser) try { _browser.close(); } catch {} });
+// Limpiar Chrome al salir
+async function _closeBrowser() {
+  if (_browser) {
+    const b = _browser;
+    _browser = null; _page = null;
+    try { await b.close(); } catch {}
+  }
+}
+process.on('SIGTERM', () => _closeBrowser());
+process.on('SIGINT', () => _closeBrowser());
+process.on('exit', () => {
+  if (_browser) try { _browser.process()?.kill('SIGKILL'); } catch {}
+});
+
+// Health check cada 5 min: si Chrome murió, lo relanza
+setInterval(async () => {
+  if (!_ready) return;
+  if (_browser && !_browser.isConnected()) {
+    console.warn('[Cocos] Browser desconectado, relanzando...');
+    _browser = null; _page = null;
+    try { await _ensureBrowser(); console.log('[Cocos] Browser recuperado'); }
+    catch (e) { console.error('[Cocos] Recovery falló:', e.message); }
+  }
+}, 5 * 60 * 1000);
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -382,8 +474,21 @@ function placeOrderByLongTicker(longTicker, side, quantity, price) {
   });
 }
 
+function getHealth() {
+  const now = Math.floor(Date.now() / 1000);
+  return {
+    ready: _ready,
+    browserConnected: !!(_browser?.isConnected()),
+    hasPage: !!_page,
+    accountId: _session.accountId,
+    tokenExpiresIn: _session.expiresAt ? Math.round((_session.expiresAt - now) / 60) + ' min' : 'N/A',
+    uptimeSeconds: Math.round(process.uptime()),
+    memoryMB: Math.round(process.memoryUsage().rss / 1024 / 1024),
+  };
+}
+
 module.exports = {
-  init, isReady, getSessionInfo, forceRefresh, updateTokens, buildLongTicker,
+  init, isReady, getSessionInfo, getHealth, forceRefresh, updateTokens, buildLongTicker,
   getMarketStatus, getDolarMEP, searchTicker, getQuote, getMarketList,
   getMyData, getPortfolio, getBuyingPower, getPerformance,
   getOrders, getOrderStatus, getSellingPower,

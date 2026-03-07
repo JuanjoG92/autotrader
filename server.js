@@ -39,6 +39,19 @@ app.use('/api/cocos',   cocosRoutes);
 app.use('/api/ai',      aiRoutes);
 app.use('/api/rag',     ragRoutes);
 
+// ── Health check (sin auth — para PM2 / monitoreo) ──
+app.get('/api/health', (req, res) => {
+  const health = cocos.getHealth ? cocos.getHealth() : { ready: cocos.isReady() };
+  const status = health.ready ? 'ok' : 'degraded';
+  res.status(health.ready ? 200 : 503).json({
+    status,
+    uptime: Math.round(process.uptime()) + 's',
+    memory: Math.round(process.memoryUsage().rss / 1024 / 1024) + ' MB',
+    cocos: health,
+    timestamp: new Date().toISOString(),
+  });
+});
+
 // ── SPA fallback ──
 app.get('/dashboard', (req, res) => res.sendFile(path.join(__dirname, 'public', 'dashboard.html')));
 app.get('/cocos',     (req, res) => res.sendFile(path.join(__dirname, 'public', 'cocos.html')));
