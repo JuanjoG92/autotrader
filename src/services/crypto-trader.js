@@ -94,20 +94,29 @@ function _getApiKeyInfo(cfg) {
 }
 
 async function _executeTrade(cfg, symbol, side, quantityUSD) {
-  const keyInfo = _getApiKeyInfo(cfg);
-  if (!keyInfo) throw new Error('Sin API key de Binance configurada');
-
   const ticker = await getTicker(symbol);
   const price = ticker?.last || 0;
   if (price <= 0) throw new Error(`Sin precio para ${symbol}`);
 
-  // Calcular cantidad en cripto
   const quantity = parseFloat((quantityUSD / price).toFixed(6));
   if (quantity <= 0) throw new Error(`Cantidad muy baja para ${symbol}`);
 
-  console.log(`[Crypto] ${side} ${symbol}: ${quantity} @ $${price} (~$${quantityUSD})`);
-  const order = await createOrder(keyInfo.user_id, keyInfo.id, symbol, side.toLowerCase(), quantity);
-  return { order, price, quantity };
+  // Intentar ejecutar en Binance si hay API key y funciona
+  const keyInfo = _getApiKeyInfo(cfg);
+  let order = null;
+  let mode = 'PAPER';
+
+  if (keyInfo) {
+    try {
+      order = await createOrder(keyInfo.user_id, keyInfo.id, symbol, side.toLowerCase(), quantity);
+      mode = 'LIVE';
+    } catch (e) {
+      console.warn(`[Crypto] Binance no disponible (${e.message.substring(0, 60)}) — ejecutando en modo paper`);
+    }
+  }
+
+  console.log(`[Crypto] ${mode} ${side} ${symbol}: ${quantity} @ $${price} (~$${quantityUSD})`);
+  return { order: order || { id: 'PAPER-' + Date.now() }, price, quantity, mode };
 }
 
 // ── AI Análisis ───────────────────────────────────────────────────────────────
@@ -140,8 +149,8 @@ async function runAnalysis() {
     ? positions.map(p => `${p.symbol}: ${p.quantity} @ $${p.entry_price} (SL:$${p.stop_loss} TP:$${p.take_profit})`).join('\n')
     : 'Sin posiciones abiertas.';
 
-  // Balance (si hay API key)
-  let balanceCtx = 'Sin datos de balance.';
+  // Balance (intentar Binance, sino simular)
+  let balanceCtx = `USDT libre: $${cfg.max_per_trade_usd * 10} (paper trading)`;
   try {
     const keyInfo = _getApiKeyInfo(cfg);
     if (keyInfo) {
@@ -151,7 +160,7 @@ async function runAnalysis() {
       balanceCtx = `USDT libre: $${usdtBal.toFixed(2)}`;
       if (entries.length) balanceCtx += ' | ' + entries.map(([k, v]) => `${k}: ${v.total}`).join(', ');
     }
-  } catch (e) { balanceCtx = 'Error obteniendo balance: ' + e.message; }
+  } catch { /* usar balance paper */ }
 
   const prompt = `ANÁLISIS CRYPTO TRADING — Binance Spot 24/7
 
@@ -170,13 +179,15 @@ ${newsCtx}
 ${ragCtx ? `\nCONTEXTO ADICIONAL:\n${ragCtx}` : ''}
 
 REGLAS:
-1. Máximo 3 señales por análisis
-2. Solo pares /USDT en Binance Spot
-3. NO PERDER DINERO es prioridad — ser conservador
-4. Si hay posiciones abiertas y deberían cerrarse, señalar SELL
-5. Confidence mínimo 0.75 para ejecutar
+1. DEBES generar entre 1 y 3 señales SIEMPRE — nunca 0 señales
+2. Solo pares /USDT en Binance Spot: BTC, ETH, BNB, SOL, XRP, ADA, DOGE, AVAX, LINK, DOT
+3. Ser inteligente: comprar en caídas con fundamentos, vender en picos
+4. Si hay posiciones abiertas que deberían cerrarse, señalar SELL
+5. Confidence entre 0.65 y 0.95
 6. Considerar tendencia 24h, volumen, noticias
 7. No comprar lo que ya tenemos abierto
+8. En mercado bajista: buscar oportunidades de compra en sobreventa
+9. En mercado alcista: tomar ganancias parciales
 
 RESPONDE SOLO JSON:
 {

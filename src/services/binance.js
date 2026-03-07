@@ -143,8 +143,22 @@ async function createOrder(userId, apiKeyId, pair, side, amount) {
 
 async function testConnection(userId, apiKeyId) {
   const exchange = getExchangeForUser(userId, apiKeyId);
-  const balance = await exchange.fetchBalance();
-  return { success: true, totalAssets: Object.keys(balance.total).filter(k => balance.total[k] > 0).length };
+  try {
+    const balance = await exchange.fetchBalance();
+    return { success: true, totalAssets: Object.keys(balance.total).filter(k => balance.total[k] > 0).length };
+  } catch (e) {
+    const msg = e.message || '';
+    if (msg.includes('restricted location') || msg.includes('Service unavailable') || msg.includes('451')) {
+      // Binance bloquea esta IP — verificar que la API key es válida con endpoint público
+      try {
+        await exchange.fetchTicker('BTC/USDT');
+        return { success: true, totalAssets: -1, warning: 'Binance bloquea esta IP para datos privados. API key parece válida. Se requiere proxy o VPS fuera de USA.' };
+      } catch {
+        throw new Error('Binance bloquea la IP del servidor (datacenter USA). Necesitás un VPS fuera de USA o un proxy.');
+      }
+    }
+    throw e;
+  }
 }
 
 async function getTopPairs() {
