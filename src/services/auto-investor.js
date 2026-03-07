@@ -125,9 +125,9 @@ async function selectBestTickers() {
     ? newsItems.map(n => `[${n.source}] ${n.title}`).join('\n')
     : 'Sin noticias recientes.';
 
-  // RAG
+  // RAG (keywords, sin embedding = gratis)
   const ragCtx = await rag.buildRAGContext(
-    'mejor inversion CEDEAR tecnologia energia petroleo rendimiento seguro diversificado estrategia'
+    'mejor inversion CEDEAR tecnologia energia petroleo rendimiento seguro diversificado estrategia', false
   );
 
   const prompt = `SELECCION AUTOMATICA DE INVERSION — AutoTrader
@@ -176,7 +176,7 @@ RESPONDE SOLO JSON:
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
     body: JSON.stringify({
-      model: OPENAI_MODEL, temperature: 0.2, max_tokens: 1500,
+      model: OPENAI_MODEL, temperature: 0.2, max_tokens: 1000,
       messages: [
         { role: 'system', content: 'Eres un agente de trading experto en BYMA/Merval y CEDEARs argentinos. Seleccionas las mejores inversiones basándote en datos técnicos, noticias y conocimiento del usuario. Conservador. JSON válido siempre.' },
         { role: 'user', content: prompt },

@@ -151,27 +151,29 @@ async function generateEmbeddings(docId) {
 
 // ── Búsqueda semántica ────────────────────────────────────────────────────────
 
-async function search(query, maxResults) {
+async function search(query, maxResults, useEmbeddings) {
   const lim    = maxResults || 5;
   const chunks = getAllChunks();
   if (!chunks.length) return [];
 
-  // Intentar búsqueda semántica
-  const withEmb = chunks.filter(c => c.embedding);
-  if (withEmb.length > 0) {
-    const queryEmb = await getEmbedding(query);
-    if (queryEmb) {
-      const scored = withEmb
-        .map(c => ({ ...c, score: cosineSimilarity(queryEmb, JSON.parse(c.embedding)) }))
-        .sort((a, b) => b.score - a.score)
-        .slice(0, lim);
-      if (scored[0]?.score > 0.25) {
-        return scored.map(({ embedding, ...c }) => c);
+  // Búsqueda semántica (solo si useEmbeddings=true, gasta 1 call OpenAI)
+  if (useEmbeddings !== false) {
+    const withEmb = chunks.filter(c => c.embedding);
+    if (withEmb.length > 0) {
+      const queryEmb = await getEmbedding(query);
+      if (queryEmb) {
+        const scored = withEmb
+          .map(c => ({ ...c, score: cosineSimilarity(queryEmb, JSON.parse(c.embedding)) }))
+          .sort((a, b) => b.score - a.score)
+          .slice(0, lim);
+        if (scored[0]?.score > 0.25) {
+          return scored.map(({ embedding, ...c }) => c);
+        }
       }
     }
   }
 
-  // Fallback: keywords
+  // Keywords (gratis, sin OpenAI)
   const qWords = query.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').match(/\b\w{3,}\b/g) || [];
   const scored = chunks.map(c => {
     const text = (c.text + ' ' + c.keywords).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
@@ -183,8 +185,8 @@ async function search(query, maxResults) {
   return scored.map(({ embedding, ...c }) => c);
 }
 
-async function buildRAGContext(query) {
-  const results = await search(query, 5);
+async function buildRAGContext(query, useEmbeddings) {
+  const results = await search(query, 5, useEmbeddings);
   if (!results.length) return '';
   return results.map(c => c.text).join('\n\n---\n\n');
 }

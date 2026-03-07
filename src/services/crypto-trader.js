@@ -216,7 +216,7 @@ async function runAnalysis() {
       } catch { return null; }
     })(),
     // RAG con keywords (NO usa embeddings/OpenAI, es gratis)
-    rag.buildRAGContext('crypto trading strategy bitcoin risk management').catch(() => ''),
+    rag.buildRAGContext('crypto trading strategy bitcoin risk management', false).catch(() => ''),
   ]);
 
   const { text: marketCtx, prices: currentPrices } = marketResult;

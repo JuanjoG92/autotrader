@@ -28,3 +28,4 @@ Plataforma de trading automatizado con IA. Conecta la cuenta de Binance del usua
 - Usar `;` como separador en PowerShell, NO `&&`.
 - NUNCA usar `run_build`.
 - Todo cambio via git push, NUNCA scp.
+- Cuando necesites ejecutar comandos en el VPS (como consultas sqlite3), crea un archivo de script local, haz commit y push, y luego ejecútalo en el VPS a través de SSH. No intentes ejecutar comandos SSH complejos en línea con comillas, ya que fallan. Siempre utiliza el flujo de trabajo de git commit+push para cualquier cambio de código.

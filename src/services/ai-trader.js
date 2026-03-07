@@ -126,7 +126,7 @@ async function callOpenAI(prompt) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
     body: JSON.stringify({
-      model: OPENAI_MODEL, temperature: 0.25, max_tokens: 2500,
+      model: OPENAI_MODEL, temperature: 0.25, max_tokens: 1200,
       messages: [
         { role: 'system', content: `Eres un agente de trading experto en BYMA/Merval y CEDEARs argentinos.
 Analizas tecnico + noticias + documentos para generar señales de inversion. JSON valido siempre.
@@ -146,13 +146,20 @@ async function runAnalysis() {
   const cfg = getConfig();
   if (!cfg.enabled) return null;
   if (!cocos.isReady()) return null;
+
+  // No gastar OpenAI en fin de semana ni fuera de horario
+  if (!isMarketHours()) {
+    console.log('[AI-Trader] Mercado cerrado — skip análisis (ahorro OpenAI)');
+    return null;
+  }
+
   console.log('[AI-Trader] Iniciando analisis...');
 
   const tickers   = getActiveTickers(cfg);
   const marketCtx = buildMarketContext(tickers);
   const newsItems = cfg.news_driven !== 0 ? news.getNewsForTickers(tickers, 15) : [];
   const newsCtx   = newsItems.length ? newsItems.map(n => `[${n.source}] ${n.title}`).join('\n') : 'Sin noticias recientes.';
-  const ragCtx    = cfg.use_rag !== 0 ? await rag.buildRAGContext('mercado argentino acciones cedear inversion ' + tickers.join(' ')) : '';
+  const ragCtx    = cfg.use_rag !== 0 ? await rag.buildRAGContext('mercado argentino acciones cedear inversion ' + tickers.join(' '), false) : '';
 
   let portfolio = 'Sin posiciones', buyingPower = 'Sin datos', marketOpen = false;
   try { const bp = await cocos.getBuyingPower(); buyingPower = `ARS $${(bp?.['24hs']?.ars||0).toLocaleString()} | USD $${(bp?.['24hs']?.usd||0).toFixed(2)}`; } catch {}
@@ -284,8 +291,8 @@ async function runTickerAnalysis(ticker) {
     ? newsItems.map(n => `- [${n.source}] ${n.title}`).join('\n')
     : 'Sin noticias recientes para este instrumento.';
 
-  // 4. RAG
-  const ragCtx = await rag.buildRAGContext(`${upperTicker} inversion rendimiento riesgo acciones cedear`);
+  // 4. RAG (keywords, sin embedding = gratis)
+  const ragCtx = await rag.buildRAGContext(`${upperTicker} inversion rendimiento riesgo acciones cedear`, false);
 
   // 5. Contexto de mercado general (otros tickers para comparar)
   const allTickers = Object.values(ALL_SECTORS).flat();
