@@ -4,7 +4,7 @@
 
 const { getDB }          = require('../models/db');
 const { getOpenAIToken } = require('./ai-token');
-const { getBalances, getTicker, getTopPairs, createOrder, getExchangeForUser } = require('./binance');
+const { getBalances, getTicker, getTickersBatch, getTopPairs, createOrder, getExchangeForUser } = require('./binance');
 const news               = require('./news-fetcher');
 const rag                = require('./rag');
 
@@ -68,6 +68,14 @@ function getPositionHistory(limit) {
 // ── Datos de mercado ──────────────────────────────────────────────────────────
 
 async function getMarketData() {
+  // ONE batch call instead of 10 sequential calls (10x faster)
+  const batchTickers = await getTickersBatch(TOP_CRYPTOS);
+  if (batchTickers && Object.keys(batchTickers).length > 0) {
+    return Object.values(batchTickers).map(t =>
+      `${t.symbol}: $${t.last.toFixed(2)} | 24h: ${t.percentage >= 0 ? '+' : ''}${t.percentage.toFixed(1)}% | Vol: $${Math.round(t.quoteVolume / 1e6)}M`
+    ).join('\n');
+  }
+  // Fallback: individual calls (slower)
   const rows = [];
   for (const pair of TOP_CRYPTOS) {
     try {
@@ -76,7 +84,6 @@ async function getMarketData() {
         rows.push(`${pair}: $${t.last.toFixed(2)} | 24h: ${t.percentage >= 0 ? '+' : ''}${t.percentage.toFixed(1)}% | Vol: $${Math.round(t.quoteVolume / 1e6)}M`);
       }
     } catch {}
-    await new Promise(r => setTimeout(r, 300)); // rate limit CoinGecko
   }
   return rows.join('\n') || 'Sin datos de mercado.';
 }
@@ -142,40 +149,46 @@ async function runAnalysis() {
   const apiKey = await getOpenAIToken();
   if (!apiKey) { console.warn('[Crypto] Sin token OpenAI'); return null; }
 
+  const t0 = Date.now();
   console.log('[Crypto] Iniciando análisis...');
 
-  // Datos de mercado
-  const marketCtx = await getMarketData();
+  // Posiciones (DB, instant)
+  const positions = getOpenPositions();
+  const posCtx = positions.length
+    ? positions.map(p => `${p.symbol}: ${p.quantity} @ $${p.entry_price} (SL:$${p.stop_loss} TP:$${p.take_profit})`).join('\n')
+    : 'Sin posiciones abiertas.';
 
-  // Noticias crypto
+  // Noticias (DB, instant)
   const cryptoTickers = ['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'CRYPTO'];
   const newsItems = news.getNewsForTickers(cryptoTickers, 15);
   const newsCtx = newsItems.length
     ? newsItems.map(n => `[${n.source}] ${n.title}`).join('\n')
     : 'Sin noticias crypto recientes.';
 
-  // RAG
-  const ragCtx = await rag.buildRAGContext('bitcoin ethereum crypto trading strategy risk');
+  // PARALLEL: market data + balance + RAG (all network calls at once)
+  const [marketCtx, balResult, ragCtx] = await Promise.all([
+    getMarketData(),
+    (async () => {
+      try {
+        const keyInfo = _getApiKeyInfo(cfg);
+        if (keyInfo) return await getBalances(keyInfo.user_id, keyInfo.id);
+      } catch {}
+      return null;
+    })(),
+    rag.buildRAGContext('bitcoin ethereum crypto trading strategy risk').catch(() => ''),
+  ]);
 
-  // Posiciones abiertas
-  const positions = getOpenPositions();
-  const posCtx = positions.length
-    ? positions.map(p => `${p.symbol}: ${p.quantity} @ $${p.entry_price} (SL:$${p.stop_loss} TP:$${p.take_profit})`).join('\n')
-    : 'Sin posiciones abiertas.';
+  console.log(`[Crypto] Datos en ${Date.now() - t0}ms`);
 
-  // Balance real
+  // Balance
   let balanceCtx = 'USDT libre: $0 (sin conexión)';
   let availableUSDT = 0;
-  try {
-    const keyInfo = _getApiKeyInfo(cfg);
-    if (keyInfo) {
-      const bal = await getBalances(keyInfo.user_id, keyInfo.id);
-      availableUSDT = bal.USDT?.free || 0;
-      const entries = Object.entries(bal).filter(([k, v]) => v.total > 0 && k !== 'USDT').slice(0, 5);
-      balanceCtx = `USDT libre: $${availableUSDT.toFixed(2)}`;
-      if (entries.length) balanceCtx += ' | ' + entries.map(([k, v]) => `${k}: ${v.total}`).join(', ');
-    }
-  } catch { /* usar balance paper */ }
+  if (balResult) {
+    availableUSDT = balResult.USDT?.free || 0;
+    const entries = Object.entries(balResult).filter(([k, v]) => v.total > 0 && k !== 'USDT').slice(0, 5);
+    balanceCtx = `USDT libre: $${availableUSDT.toFixed(2)}`;
+    if (entries.length) balanceCtx += ' | ' + entries.map(([k, v]) => `${k}: ${v.total}`).join(', ');
+  }
 
   // Smart position sizing: 15-25% of available capital per trade, min $5
   const positionSize = Math.max(5, Math.min(availableUSDT * 0.20, availableUSDT - 2));
