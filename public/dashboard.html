@@ -28,6 +28,10 @@
         <i class="fas fa-landmark" style="color:#8b5cf6"></i>
         <span style="color:#c4b5fd;font-weight:600">Cocos Capital 🤖</span>
       </a>
+      <a href="/binance" class="sidebar-external" style="display:flex;align-items:center;gap:.75rem;padding:.6rem 1rem;background:rgba(245,158,11,.12);border-left:3px solid #f59e0b;margin:.25rem .5rem;border-radius:8px;text-decoration:none;cursor:pointer">
+        <i class="fab fa-bitcoin" style="color:#f59e0b"></i>
+        <span style="color:#fbbf24;font-weight:600">Binance Crypto 🔥</span>
+      </a>
       <a href="/rag" class="sidebar-external" style="display:flex;align-items:center;gap:.75rem;padding:.6rem 1rem;background:rgba(16,185,129,.12);border-left:3px solid #10b981;margin:.25rem .5rem;border-radius:8px;text-decoration:none;cursor:pointer">
         <i class="fas fa-brain" style="color:#10b981"></i>
         <span style="color:#6ee7b7;font-weight:600">Config IA + RAG</span>
@@ -75,6 +79,14 @@
           <div class="stat-icon" id="pnlIcon"><i class="fas fa-dollar-sign"></i></div>
           <div><div class="stat-value" id="totalPnl">$0</div><div class="stat-label">PnL total</div></div>
         </div>
+        <div class="stat-card">
+          <div class="stat-icon amber"><i class="fab fa-bitcoin"></i></div>
+          <div><div class="stat-value" id="binanceBalance">---</div><div class="stat-label">Balance Binance</div></div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon" style="background:rgba(139,92,246,.12)"><i class="fas fa-brain" style="color:#8b5cf6"></i></div>
+          <div><div class="stat-value" id="cryptoAiStatus">---</div><div class="stat-label">IA Crypto</div></div>
+        </div>
       </div>
 
       <!-- Live prices -->
@@ -86,6 +98,17 @@
           <div class="price-card" id="lp-BNB"><span class="pc-symbol">BNB/USDT</span><span class="pc-price">---</span><span class="pc-change">---</span></div>
           <div class="price-card" id="lp-SOL"><span class="pc-symbol">SOL/USDT</span><span class="pc-price">---</span><span class="pc-change">---</span></div>
           <div class="price-card" id="lp-XRP"><span class="pc-symbol">XRP/USDT</span><span class="pc-price">---</span><span class="pc-change">---</span></div>
+        </div>
+      </div>
+
+      <!-- Crypto AI Positions -->
+      <div class="card" id="cryptoPositionsCard" style="display:none">
+        <div class="card-header"><h3><i class="fas fa-brain"></i> Posiciones IA Crypto</h3></div>
+        <div class="table-wrap">
+          <table class="table">
+            <thead><tr><th>Par</th><th>Lado</th><th>Cantidad</th><th>Entrada</th><th>Actual</th><th>PnL %</th></tr></thead>
+            <tbody id="cryptoPositions"><tr><td colspan="6" class="empty">Sin posiciones</td></tr></tbody>
+          </table>
         </div>
       </div>
 

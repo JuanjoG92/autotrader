@@ -36,27 +36,74 @@
 
   // ── Init ──
   connectPriceStream();
-  setTimeout(loadOverview, 300); // Pequeño delay para asegurar que el WS conecte primero
+  loadOverview();
   loadKeys();
 
   // ── Overview ──
   async function loadOverview() {
     try {
-      const bots = await apiFetch('/trading/bots').catch(() => []);
-      const summary = await apiFetch('/trading/trades/summary').catch(() => ({}));
-      document.getElementById('activeBots').textContent = Array.isArray(bots) ? bots.filter(b => b.status === 'active').length : 0;
-      document.getElementById('totalTrades').textContent = summary.total || 0;
+      const [bots, summary, cryptoStatus, cryptoBalance, cryptoSummary] = await Promise.all([
+        apiFetch('/trading/bots').catch(() => []),
+        apiFetch('/trading/trades/summary').catch(() => ({})),
+        apiFetch('/crypto/status').catch(() => ({})),
+        apiFetch('/crypto/balance').catch(() => null),
+        apiFetch('/crypto/summary').catch(() => ({})),
+      ]);
+
+      const activeBots = Array.isArray(bots) ? bots.filter(b => b.status === 'active').length : 0;
+      const openPositions = cryptoStatus.openPositions || 0;
+      document.getElementById('activeBots').textContent = activeBots + openPositions;
+
+      const totalTrades = (summary.total || 0) + (cryptoSummary.total_positions || 0);
+      document.getElementById('totalTrades').textContent = totalTrades;
       document.getElementById('totalVolume').textContent = formatUSD(summary.volume || 0);
-      const pnl = summary.total_pnl || 0;
+
+      const pnl = (summary.total_pnl || 0) + (cryptoSummary.total_pnl || 0);
       document.getElementById('totalPnl').textContent = (pnl >= 0 ? '+' : '') + formatUSD(pnl);
       const pnlIcon = document.getElementById('pnlIcon');
       pnlIcon.className = 'stat-icon ' + (pnl >= 0 ? 'green' : 'red');
+
+      // Binance balance
+      if (cryptoBalance && cryptoBalance.USDT) {
+        document.getElementById('binanceBalance').textContent = '$' + formatNum(cryptoBalance.USDT.free);
+      } else if (cryptoBalance === null) {
+        document.getElementById('binanceBalance').textContent = 'Sin key';
+      } else {
+        document.getElementById('binanceBalance').textContent = '$0.00';
+      }
+
+      // Crypto AI status
+      const aiEl = document.getElementById('cryptoAiStatus');
+      if (cryptoStatus.enabled !== undefined) {
+        aiEl.textContent = cryptoStatus.enabled ? '🟢 Activa (' + openPositions + ' pos)' : '⏸ Inactiva';
+      }
+
+      // Crypto positions
+      const positions = cryptoStatus.positions || [];
+      const posCard = document.getElementById('cryptoPositionsCard');
+      const posBody = document.getElementById('cryptoPositions');
+      if (positions.length > 0) {
+        posCard.style.display = '';
+        posBody.innerHTML = positions.map(p => {
+          const pnlPct = p.pnlPct || 'N/A';
+          const cls = parseFloat(pnlPct) >= 0 ? 'tag-buy' : 'tag-sell';
+          return `<tr>
+            <td><strong>${p.symbol}</strong></td>
+            <td><span class="tag-buy">BUY</span></td>
+            <td>${formatNum(p.qty, 6)}</td>
+            <td>$${formatNum(p.entry)}</td>
+            <td>$${formatNum(p.current)}</td>
+            <td><span class="${cls}">${pnlPct}</span></td>
+          </tr>`;
+        }).join('');
+      } else {
+        posCard.style.display = 'none';
+      }
 
       const trades = await apiFetch('/trading/trades?limit=10').catch(() => []);
       renderTrades('recentTrades', Array.isArray(trades) ? trades : [], false);
     } catch (err) {
       console.error('Overview error:', err);
-      // Reintentar en 3s si falló
       setTimeout(loadOverview, 3000);
     }
   }

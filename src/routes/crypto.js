@@ -4,6 +4,8 @@
 const express = require('express');
 const router  = express.Router();
 const crypto  = require('../services/crypto-trader');
+const binance = require('../services/binance');
+const { getDB } = require('../models/db');
 
 // Estado general
 router.get('/status', (req, res) => {
@@ -50,9 +52,60 @@ router.get('/history', (req, res) => {
   res.json(crypto.getPositionHistory(req.query.limit || 30));
 });
 
+// Resumen crypto (posiciones + PnL)
+router.get('/summary', (req, res) => {
+  const db = getDB();
+  const open = db.prepare("SELECT COUNT(*) as count FROM crypto_positions WHERE status = 'OPEN'").get();
+  const closed = db.prepare("SELECT COUNT(*) as count, SUM(pnl) as total_pnl FROM crypto_positions WHERE status = 'CLOSED'").get();
+  const total = db.prepare("SELECT COUNT(*) as count FROM crypto_positions").get();
+  res.json({
+    open_positions: open?.count || 0,
+    closed_positions: closed?.count || 0,
+    total_positions: total?.count || 0,
+    total_pnl: closed?.total_pnl || 0,
+  });
+});
+
+// Balance Binance (primera key disponible)
+router.get('/balance', async (req, res) => {
+  try {
+    const bal = await binance.getFirstBinanceBalance();
+    res.json(bal || {});
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Market tickers via Binance
+router.get('/market', async (req, res) => {
+  try {
+    const pairs = await binance.getTopPairs();
+    res.json(pairs);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Orden manual crypto
+router.post('/order', async (req, res) => {
+  try {
+    const { symbol, side, amountUSD } = req.body;
+    if (!symbol || !side || !amountUSD) return res.status(400).json({ error: 'symbol, side, amountUSD requeridos' });
+
+    const db = getDB();
+    const key = db.prepare("SELECT * FROM api_keys WHERE exchange = 'binance' LIMIT 1").get();
+    if (!key) return res.status(400).json({ error: 'No hay API key de Binance configurada' });
+
+    const ticker = await binance.getTicker(symbol);
+    const price = ticker?.last || 0;
+    if (price <= 0) return res.status(400).json({ error: 'Sin precio para ' + symbol });
+
+    const quantity = parseFloat((amountUSD / price).toFixed(6));
+    if (quantity <= 0) return res.status(400).json({ error: 'Monto muy pequeño' });
+
+    const order = await binance.createOrder(key.user_id, key.id, symbol, side.toLowerCase(), quantity);
+    res.json({ ok: true, order, price, quantity, total: amountUSD });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // Limpiar posiciones paper y resetear
 router.post('/reset', (req, res) => {
-  const { getDB } = require('../models/db');
   const db = getDB();
   const r = db.prepare("UPDATE crypto_positions SET status = 'CLOSED', reason = 'manual reset' WHERE status = 'OPEN'").run();
   res.json({ ok: true, closed: r.changes });

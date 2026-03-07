@@ -1,0 +1,565 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Binance Crypto — AutoTrader</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    :root{--bg:#0f172a;--card:#1e293b;--border:#334155;--text:#e2e8f0;--muted:#64748b;--green:#10b981;--red:#ef4444;--purple:#8b5cf6;--amber:#f59e0b;--blue:#3b82f6}
+    body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;display:flex;min-height:100vh;font-size:14px}
+
+    .sidebar{width:200px;background:var(--card);flex-shrink:0;display:flex;flex-direction:column;border-right:1px solid var(--border);transition:width .25s;overflow:hidden}
+    .sidebar-logo{display:flex;align-items:center;gap:.5rem;padding:1.25rem 1rem;font-size:1rem;font-weight:700;color:var(--text);text-decoration:none;border-bottom:1px solid var(--border);white-space:nowrap}
+    .sidebar-logo i{color:var(--purple)}
+    .nav-link{display:flex;align-items:center;gap:.6rem;padding:.65rem 1rem;color:#94a3b8;text-decoration:none;font-size:.85rem;transition:all .15s;white-space:nowrap}
+    .nav-link:hover{background:rgba(255,255,255,.05);color:var(--text)}
+    .nav-link.active{background:rgba(245,158,11,.15);color:#fbbf24;border-left:2px solid var(--amber)}
+    .nav-ext{display:flex;align-items:center;gap:.6rem;padding:.6rem .75rem;margin:.2rem .5rem;border-radius:8px;text-decoration:none;font-size:.84rem;white-space:nowrap}
+    .sidebar-footer{margin-top:auto;padding:.75rem 1rem;border-top:1px solid var(--border);display:flex;align-items:center;justify-content:space-between}
+    .sidebar-footer span{font-size:.8rem;color:var(--muted)}
+
+    .page{flex:1;display:flex;flex-direction:column;overflow:hidden}
+    .topbar{display:flex;align-items:center;justify-content:space-between;padding:.65rem 1.25rem;background:var(--card);border-bottom:1px solid var(--border);gap:1rem}
+    .topbar-left{display:flex;align-items:center;gap:.75rem}
+    .topbar-badge{display:flex;align-items:center;gap:.35rem;padding:.25rem .65rem;border-radius:20px;font-size:.75rem;font-weight:600}
+    .badge-on{background:rgba(16,185,129,.15);color:var(--green)}
+    .badge-off{background:rgba(100,116,139,.15);color:var(--muted)}
+    .content{flex:1;display:grid;grid-template-columns:minmax(200px,260px) minmax(0,1fr) minmax(220px,280px);gap:0;overflow:hidden;min-width:0}
+    .content>*{min-width:0}
+
+    .panel{padding:1rem;overflow-y:auto;overflow-x:hidden;border-right:1px solid var(--border);min-width:0}
+    .panel:last-child{border-right:none}
+    .card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:1rem;margin-bottom:.75rem}
+    .card-title{font-size:.7rem;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin-bottom:.75rem;display:flex;align-items:center;gap:.4rem}
+    .card-title i{font-size:.75rem}
+
+    .funds-big{font-size:1.6rem;font-weight:700;color:var(--green);line-height:1}
+    .funds-label{font-size:.72rem;color:var(--muted)}
+    .asset-item{display:flex;justify-content:space-between;align-items:center;padding:.5rem .6rem;background:rgba(255,255,255,.03);border-radius:6px;margin-bottom:.35rem;border-left:2px solid var(--amber)}
+    .asset-ticker{font-weight:600;font-size:.85rem}
+    .asset-val{font-size:.82rem;color:var(--green)}
+    .pos-item{padding:.5rem .6rem;background:rgba(255,255,255,.03);border-radius:6px;margin-bottom:.35rem;border-left:2px solid var(--green);font-size:.82rem}
+    .pos-item.negative{border-color:var(--red)}
+
+    .btn{display:inline-flex;align-items:center;gap:.35rem;padding:.45rem .9rem;border-radius:7px;font-size:.8rem;font-weight:500;cursor:pointer;border:none;transition:all .15s;white-space:nowrap}
+    .btn-primary{background:var(--purple);color:#fff}.btn-primary:hover{background:#7c3aed}
+    .btn-green{background:var(--green);color:#fff}.btn-green:hover{background:#059669}
+    .btn-red{background:var(--red);color:#fff}.btn-red:hover{background:#dc2626}
+    .btn-ghost{background:transparent;color:#94a3b8;border:1px solid var(--border)}.btn-ghost:hover{background:var(--card);color:var(--text)}
+    .btn-sm{padding:.3rem .6rem;font-size:.72rem}
+    .btn:disabled{opacity:.5;cursor:not-allowed}
+    .btn-block{width:100%;justify-content:center}
+
+    .order-tabs{display:grid;grid-template-columns:1fr 1fr;margin-bottom:.75rem;border-radius:8px;overflow:hidden;border:1px solid var(--border)}
+    .order-tab{padding:.5rem;text-align:center;cursor:pointer;font-weight:600;font-size:.82rem;transition:all .2s;background:rgba(255,255,255,.03);color:var(--muted)}
+    .order-tab.active-buy{background:rgba(16,185,129,.2);color:var(--green)}
+    .order-tab.active-sell{background:rgba(239,68,68,.2);color:var(--red)}
+    .form-group{margin-bottom:.6rem}
+    .form-label{display:block;font-size:.72rem;color:var(--muted);margin-bottom:.2rem}
+    .form-control{width:100%;background:#0f172a;border:1px solid var(--border);border-radius:7px;padding:.45rem .6rem;color:var(--text);font-size:.82rem}
+    .form-control:focus{outline:none;border-color:var(--amber)}
+    .form-row{display:grid;grid-template-columns:1fr 1fr;gap:.5rem}
+
+    .market-panel{padding:0;display:flex;flex-direction:column}
+    .market-header{padding:.85rem 1.25rem;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:.75rem;flex-shrink:0}
+    .market-header h2{font-size:.95rem;font-weight:600;display:flex;align-items:center;gap:.5rem}
+    .market-table-wrap{flex:1;overflow-y:auto}
+    table{width:100%;border-collapse:collapse}
+    th{padding:.6rem .75rem;text-align:left;font-size:.68rem;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);border-bottom:1px solid var(--border);position:sticky;top:0;background:#162032;white-space:nowrap;z-index:1}
+    td{padding:.5rem .75rem;font-size:.82rem;border-bottom:1px solid rgba(51,65,85,.5);white-space:nowrap}
+    tr:hover td{background:rgba(255,255,255,.03)}
+    .price-up{color:var(--green)}.price-down{color:var(--red)}.price-neutral{color:var(--muted)}
+    .var-badge{display:inline-flex;align-items:center;gap:.2rem;padding:.15rem .45rem;border-radius:4px;font-size:.75rem;font-weight:600}
+    .var-up{background:rgba(16,185,129,.15);color:var(--green)}
+    .var-down{background:rgba(239,68,68,.15);color:var(--red)}
+    .action-btns{display:flex;gap:.3rem}
+    .loading-row td{text-align:center;padding:3rem;color:var(--muted)}
+
+    .ai-panel{padding:.85rem;overflow-x:hidden;min-width:0}
+    .toggle-row{display:flex;align-items:center;justify-content:space-between;padding:.5rem .6rem;background:rgba(255,255,255,.03);border-radius:8px;margin-bottom:.4rem;gap:.4rem;min-width:0}
+    .toggle-label{font-size:.78rem;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .toggle{position:relative;display:inline-block;width:38px;height:20px}
+    .toggle input{opacity:0;width:0;height:0}
+    .slider{position:absolute;cursor:pointer;inset:0;background:#334155;border-radius:20px;transition:.25s}
+    .slider:before{content:'';position:absolute;height:14px;width:14px;left:3px;bottom:3px;background:#fff;border-radius:50%;transition:.25s}
+    input:checked+.slider{background:var(--amber)}
+    input:checked+.slider:before{transform:translateX(18px)}
+    .ai-status{display:inline-flex;align-items:center;gap:.35rem;font-size:.72rem;font-weight:600;padding:.25rem .6rem;border-radius:20px}
+    .ai-active{background:rgba(16,185,129,.15);color:var(--green)}
+    .ai-inactive{background:rgba(100,116,139,.15);color:var(--muted)}
+    .analysis-box{background:#0f172a;border-radius:8px;padding:.75rem;font-size:.78rem;line-height:1.6;color:#94a3b8;margin-top:.5rem;min-height:60px;max-height:120px;overflow-y:auto}
+    .signal-item{padding:.6rem .7rem;border-radius:8px;margin-bottom:.4rem;border-left:3px solid transparent}
+    .signal-item.BUY{background:rgba(16,185,129,.08);border-color:var(--green)}
+    .signal-item.SELL{background:rgba(239,68,68,.08);border-color:var(--red)}
+    .signal-item.HOLD{background:rgba(100,116,139,.08);border-color:var(--muted)}
+    .signal-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:.25rem}
+    .signal-ticker-name{font-weight:700;font-size:.88rem}
+    .signal-reason{font-size:.72rem;color:#94a3b8;line-height:1.5}
+    .badge{display:inline-flex;align-items:center;gap:.2rem;padding:.15rem .45rem;border-radius:4px;font-size:.7rem;font-weight:700}
+    .badge-buy{background:rgba(16,185,129,.2);color:var(--green)}
+    .badge-sell{background:rgba(239,68,68,.2);color:var(--red)}
+    .badge-hold{background:rgba(100,116,139,.2);color:var(--muted)}
+
+    @media(max-width:1200px){.content{grid-template-columns:minmax(180px,220px) minmax(0,1fr) minmax(200px,250px)}.sidebar{width:180px}}
+    @media(max-width:1024px){.content{grid-template-columns:minmax(0,1fr) minmax(200px,250px)}.content>.panel:first-child{display:none}}
+    @media(max-width:768px){.sidebar{display:none}.content{grid-template-columns:1fr}.content>.panel:first-child{display:flex}}
+  </style>
+</head>
+<body>
+
+<!-- Sidebar -->
+<aside class="sidebar">
+  <a href="/" class="sidebar-logo"><i class="fas fa-chart-line"></i> AutoTrader</a>
+  <nav style="padding:.5rem 0">
+    <a href="/dashboard" class="nav-link"><i class="fas fa-home"></i> Resumen</a>
+    <div style="height:1px;background:var(--border);margin:.5rem 0"></div>
+    <a href="/binance" class="nav-link active"><i class="fab fa-bitcoin"></i> Binance Crypto</a>
+    <a href="/cocos" class="nav-link"><i class="fas fa-landmark"></i> Cocos Capital</a>
+    <a href="/rag" class="nav-ext" style="background:rgba(16,185,129,.1);border-left:2px solid var(--green);margin:.25rem .5rem">
+      <i class="fas fa-brain" style="color:var(--green)"></i><span style="color:#6ee7b7">Config IA + RAG</span>
+    </a>
+    <div style="height:1px;background:var(--border);margin:.5rem 0"></div>
+    <a href="/dashboard" class="nav-link"><i class="fas fa-robot"></i> Mis Bots (Crypto)</a>
+    <a href="/dashboard" class="nav-link"><i class="fas fa-key"></i> API Keys</a>
+  </nav>
+  <div class="sidebar-footer">
+    <span><i class="fas fa-user-circle"></i> <span id="userName">...</span></span>
+    <button onclick="logout()" style="background:none;border:none;color:var(--muted);cursor:pointer"><i class="fas fa-sign-out-alt"></i></button>
+  </div>
+</aside>
+
+<!-- Page -->
+<div class="page">
+
+  <!-- Topbar -->
+  <div class="topbar">
+    <div class="topbar-left">
+      <i class="fab fa-bitcoin" style="color:var(--amber)"></i>
+      <strong>Binance Crypto</strong>
+      <span id="proxyBadge" class="topbar-badge badge-off"><i class="fas fa-circle" style="font-size:.5rem"></i> Verificando...</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:.75rem;font-size:.8rem;color:var(--muted)">
+      <span>Balance: <strong id="topBalance" style="color:var(--green)">---</strong></span>
+      <span>Posiciones: <strong id="topPositions" style="color:var(--text)">0</strong></span>
+      <span style="font-size:.72rem">Auto-refresh 30s <i class="fas fa-sync-alt" id="syncIcon"></i></span>
+    </div>
+  </div>
+
+  <!-- 3-column content -->
+  <div class="content">
+
+    <!-- LEFT: Balance + Positions + Order -->
+    <div class="panel">
+
+      <!-- Balance -->
+      <div class="card">
+        <div class="card-title"><i class="fas fa-wallet"></i> Balance Binance</div>
+        <div id="balanceSection">
+          <div class="funds-big" style="animation:pulse 1.5s ease-in-out infinite">Cargando...</div>
+        </div>
+      </div>
+
+      <!-- Open Positions -->
+      <div class="card">
+        <div class="card-title"><i class="fas fa-chart-line"></i> Posiciones Abiertas</div>
+        <div id="positionsList"><div style="color:var(--muted);font-size:.78rem">Sin posiciones</div></div>
+      </div>
+
+      <!-- Manual Order -->
+      <div class="card">
+        <div class="card-title"><i class="fas fa-exchange-alt"></i> Orden Manual</div>
+        <div class="order-tabs">
+          <div class="order-tab active-buy" id="tabBuy" onclick="setOrderSide('buy')">▲ COMPRAR</div>
+          <div class="order-tab" id="tabSell" onclick="setOrderSide('sell')">▼ VENDER</div>
+        </div>
+        <div class="form-group">
+          <div class="form-label">Par</div>
+          <select id="orderSymbol" class="form-control">
+            <option value="BTC/USDT">BTC/USDT</option>
+            <option value="ETH/USDT">ETH/USDT</option>
+            <option value="BNB/USDT">BNB/USDT</option>
+            <option value="SOL/USDT">SOL/USDT</option>
+            <option value="XRP/USDT">XRP/USDT</option>
+            <option value="ADA/USDT">ADA/USDT</option>
+            <option value="DOGE/USDT">DOGE/USDT</option>
+            <option value="AVAX/USDT">AVAX/USDT</option>
+            <option value="LINK/USDT">LINK/USDT</option>
+            <option value="DOT/USDT">DOT/USDT</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <div class="form-label">Monto (USDT)</div>
+          <input type="number" id="orderAmount" class="form-control" value="10" min="1" step="1">
+        </div>
+        <button class="btn btn-green btn-block" onclick="submitOrder()">
+          <i class="fas fa-paper-plane"></i> Enviar Orden
+        </button>
+        <div id="orderResult" style="margin-top:.5rem;font-size:.75rem"></div>
+      </div>
+    </div>
+
+    <!-- CENTER: Market Table -->
+    <div class="market-panel">
+      <div class="market-header">
+        <h2><i class="fas fa-chart-bar" style="color:var(--amber)"></i> Mercado Crypto</h2>
+        <div style="display:flex;gap:.5rem">
+          <button class="btn btn-sm btn-ghost" onclick="loadMarket()" title="Actualizar"><i class="fas fa-sync-alt"></i></button>
+        </div>
+      </div>
+      <div class="market-table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Par</th>
+              <th>Precio</th>
+              <th style="cursor:pointer" onclick="toggleSort()">Var 24h <span id="sortIcon"></span></th>
+              <th>Volumen</th>
+              <th>High</th>
+              <th>Low</th>
+              <th style="text-align:right">Acciones</th>
+            </tr>
+          </thead>
+          <tbody id="marketBody">
+            <tr class="loading-row"><td colspan="7"><i class="fas fa-spinner fa-spin"></i> Cargando mercado...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- RIGHT: AI Agent -->
+    <div class="panel ai-panel">
+
+      <!-- AI Status -->
+      <div class="card" style="margin-bottom:.75rem">
+        <div class="card-title" style="margin-bottom:.6rem">
+          <i class="fas fa-robot"></i> Agente IA Crypto
+          <span id="aiStatusBadge" class="ai-status ai-inactive" style="margin-left:auto">⏸ Inactivo</span>
+        </div>
+        <div class="toggle-row">
+          <span class="toggle-label">IA Activada</span>
+          <label class="toggle"><input type="checkbox" id="aiEnabled" onchange="toggleAI()"><span class="slider"></span></label>
+        </div>
+        <div style="margin:.5rem 0" class="form-row">
+          <div class="form-group">
+            <div class="form-label">Máx/op (USD)</div>
+            <input type="number" id="cfgMaxTrade" class="form-control" value="10">
+          </div>
+          <div class="form-group">
+            <div class="form-label">Conf. mín %</div>
+            <input type="number" id="cfgMinConf" class="form-control" value="70" min="50" max="99">
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <div class="form-label">Stop-Loss %</div>
+            <input type="number" id="cfgSL" class="form-control" value="5" min="1" max="50">
+          </div>
+          <div class="form-group">
+            <div class="form-label">Take-Profit %</div>
+            <input type="number" id="cfgTP" class="form-control" value="8" min="1" max="100">
+          </div>
+        </div>
+        <div class="form-group">
+          <div class="form-label">Riesgo</div>
+          <select id="cfgRisk" class="form-control">
+            <option value="low">Bajo</option>
+            <option value="medium" selected>Medio</option>
+            <option value="high">Alto</option>
+          </select>
+        </div>
+        <div style="display:flex;gap:.4rem">
+          <button class="btn btn-primary" id="btnAnalyze" onclick="triggerAnalysis()" style="flex:1;font-size:.78rem">
+            <i class="fas fa-brain"></i> Analizar Ahora
+          </button>
+          <button class="btn btn-ghost" onclick="saveConfig()" style="font-size:.78rem">
+            <i class="fas fa-save"></i>
+          </button>
+        </div>
+        <div style="margin-top:.5rem">
+          <div class="form-label">Sentimiento: <span id="aiSentiment" style="color:var(--amber)">-</span></div>
+          <div class="analysis-box" id="aiAnalysis">Sin análisis reciente.</div>
+        </div>
+      </div>
+
+      <!-- Signals -->
+      <div class="card-title"><i class="fas fa-bell"></i> Señales IA
+        <button onclick="loadPositions()" style="background:none;border:none;color:var(--muted);cursor:pointer;margin-left:auto;font-size:.75rem"><i class="fas fa-sync"></i></button>
+      </div>
+      <div id="signalsList" style="margin-top:.5rem">
+        <div style="color:var(--muted);font-size:.78rem;text-align:center;padding:1rem">Sin señales aún</div>
+      </div>
+
+      <!-- History -->
+      <div class="card-title" style="margin-top:.75rem"><i class="fas fa-history"></i> Historial Reciente</div>
+      <div id="historyList" style="margin-top:.5rem">
+        <div style="color:var(--muted);font-size:.78rem;text-align:center;padding:1rem">Sin historial</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const API = '/api';
+const _token = localStorage.getItem('at_token') || '';
+let _side = 'buy';
+let _allPairs = [];
+let _sortDir = 0;
+let _lastAnalysis = null;
+
+if (!_token) location.href = '/login';
+try { const p = JSON.parse(atob(_token.split('.')[1])); document.getElementById('userName').textContent = p.name || p.email || 'Usuario'; } catch {}
+
+function logout() { localStorage.removeItem('at_token'); localStorage.removeItem('at_user'); location.href = '/login'; }
+const h = () => ({ 'Content-Type': 'application/json', 'Authorization': `Bearer ${_token}` });
+
+async function api(method, path, body) {
+  try {
+    const res = await fetch(`${API}${path}`, { method, headers: h(), body: body ? JSON.stringify(body) : undefined });
+    if (res.status === 401) { location.href = '/login'; return null; }
+    const text = await res.text();
+    try { return JSON.parse(text); } catch { return { error: text }; }
+  } catch(e) { return { error: e.message }; }
+}
+
+function fmt(n, d=2) { return n != null && !isNaN(n) ? Number(n).toLocaleString('es-AR',{minimumFractionDigits:d,maximumFractionDigits:d}) : '---'; }
+
+// ── Balance ──
+async function loadBalance() {
+  const bal = await api('GET', '/crypto/balance');
+  const el = document.getElementById('balanceSection');
+  const badge = document.getElementById('proxyBadge');
+  if (!bal || bal.error) {
+    el.innerHTML = `<div class="funds-big" style="color:var(--red)">Error</div><div class="funds-label">${bal?.error || 'Sin conexión'}</div>`;
+    badge.className = 'topbar-badge badge-off';
+    badge.innerHTML = '<i class="fas fa-circle" style="font-size:.5rem"></i> Sin conexión';
+    return;
+  }
+  badge.className = 'topbar-badge badge-on';
+  badge.innerHTML = '<i class="fas fa-circle" style="font-size:.5rem"></i> Conectado';
+
+  const usdt = bal.USDT?.free || 0;
+  document.getElementById('topBalance').textContent = '$' + fmt(usdt);
+  let html = `<div class="funds-big">$${fmt(usdt)}</div><div class="funds-label">USDT disponible</div>`;
+  const others = Object.entries(bal).filter(([k,v]) => k !== 'USDT' && v.total > 0).slice(0, 8);
+  if (others.length) {
+    html += '<div style="margin-top:.5rem">';
+    others.forEach(([coin, info]) => {
+      html += `<div class="asset-item"><div><span class="asset-ticker">${coin}</span></div><span class="asset-val">${fmt(info.total, 6)}</span></div>`;
+    });
+    html += '</div>';
+  }
+  el.innerHTML = html;
+}
+
+// ── Positions ──
+async function loadPositions() {
+  const positions = await api('GET', '/crypto/positions');
+  const el = document.getElementById('positionsList');
+  document.getElementById('topPositions').textContent = Array.isArray(positions) ? positions.length : 0;
+
+  if (!positions?.length) { el.innerHTML = '<div style="color:var(--muted);font-size:.78rem">Sin posiciones abiertas</div>'; renderSignals([]); return; }
+  el.innerHTML = positions.map(p => {
+    const pnlPct = p.current_price ? (((p.current_price - p.entry_price) / p.entry_price) * 100) : 0;
+    const cls = pnlPct >= 0 ? '' : 'negative';
+    return `<div class="pos-item ${cls}">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <strong>${p.symbol}</strong>
+        <span style="color:${pnlPct>=0?'var(--green)':'var(--red)'}; font-weight:600">${pnlPct>=0?'+':''}${fmt(pnlPct,1)}%</span>
+      </div>
+      <div style="font-size:.72rem;color:var(--muted)">
+        ${fmt(p.quantity,6)} @ $${fmt(p.entry_price)} → $${fmt(p.current_price||0)}
+        | SL:$${fmt(p.stop_loss)} TP:$${fmt(p.take_profit)}
+      </div>
+      <div style="font-size:.68rem;color:var(--muted);margin-top:.15rem">${p.reason || ''}</div>
+    </div>`;
+  }).join('');
+
+  renderSignals(positions);
+}
+
+function renderSignals(positions) {
+  const el = document.getElementById('signalsList');
+  if (!positions.length && !_lastAnalysis) {
+    el.innerHTML = '<div style="color:var(--muted);font-size:.78rem;text-align:center;padding:1rem">Sin señales aún</div>';
+    return;
+  }
+  let html = '';
+  if (_lastAnalysis?.signals) {
+    _lastAnalysis.signals.forEach(s => {
+      const cls = s.action === 'BUY' ? 'BUY' : s.action === 'SELL' ? 'SELL' : 'HOLD';
+      const bcls = s.action === 'BUY' ? 'badge-buy' : s.action === 'SELL' ? 'badge-sell' : 'badge-hold';
+      html += `<div class="signal-item ${cls}">
+        <div class="signal-header"><span class="signal-ticker-name">${s.symbol}</span><span class="badge ${bcls}">${s.action}</span></div>
+        <div class="signal-reason">${(s.reason||'').substring(0,150)}</div>
+        <span class="badge badge-hold">${((s.confidence||0)*100).toFixed(0)}% conf</span>
+      </div>`;
+    });
+  }
+  el.innerHTML = html || '<div style="color:var(--muted);font-size:.78rem;text-align:center;padding:1rem">Sin señales recientes</div>';
+}
+
+// ── History ──
+async function loadHistory() {
+  const history = await api('GET', '/crypto/history?limit=15');
+  const el = document.getElementById('historyList');
+  if (!history?.length) { el.innerHTML = '<div style="color:var(--muted);font-size:.78rem;text-align:center;padding:.5rem">Sin historial</div>'; return; }
+  el.innerHTML = history.filter(h => h.status === 'CLOSED').slice(0,10).map(p => {
+    const pnl = p.pnl || 0;
+    const cls = pnl >= 0 ? 'var(--green)' : 'var(--red)';
+    const dt = new Date(p.closed_at || p.created_at).toLocaleString('es-AR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
+    return `<div style="padding:.4rem .5rem;font-size:.75rem;border-bottom:1px solid rgba(51,65,85,.3)">
+      <div style="display:flex;justify-content:space-between"><strong>${p.symbol}</strong><span style="color:${cls};font-weight:600">${pnl>=0?'+':''}$${fmt(pnl)}</span></div>
+      <div style="color:var(--muted);font-size:.68rem">${dt} — ${(p.reason||'').substring(0,60)}</div>
+    </div>`;
+  }).join('');
+}
+
+// ── Market ──
+function toggleSort() { _sortDir = _sortDir === 1 ? -1 : _sortDir === -1 ? 0 : 1; document.getElementById('sortIcon').textContent = _sortDir === 1 ? '▼' : _sortDir === -1 ? '▲' : ''; renderMarket(); }
+
+async function loadMarket() {
+  document.getElementById('syncIcon').className = 'fas fa-spinner fa-spin';
+  const data = await api('GET', '/crypto/market');
+  document.getElementById('syncIcon').className = 'fas fa-sync-alt';
+  if (data && Array.isArray(data)) { _allPairs = data; renderMarket(); }
+}
+
+function renderMarket() {
+  const tbody = document.getElementById('marketBody');
+  let data = [..._allPairs];
+  if (_sortDir !== 0) data.sort((a,b) => _sortDir === 1 ? (b.change24h||0)-(a.change24h||0) : (a.change24h||0)-(b.change24h||0));
+
+  if (!data.length) { tbody.innerHTML = '<tr class="loading-row"><td colspan="7"><i class="fas fa-spinner fa-spin"></i> Cargando...</td></tr>'; return; }
+  tbody.innerHTML = data.map(p => {
+    const v = p.change24h || 0;
+    const vCls = v > 0 ? 'var-up' : v < 0 ? 'var-down' : '';
+    const vIcon = v > 0 ? '▲' : v < 0 ? '▼' : '—';
+    const pCls = v > 0 ? 'price-up' : v < 0 ? 'price-down' : '';
+    return `<tr>
+      <td><strong>${p.symbol}</strong></td>
+      <td class="${pCls}" style="font-weight:600">$${fmt(p.price, p.price > 100 ? 2 : 4)}</td>
+      <td><span class="var-badge ${vCls}">${vIcon} ${v>=0?'+':''}${fmt(v)}%</span></td>
+      <td style="color:var(--muted)">$${fmt(p.volume/1e6,1)}M</td>
+      <td>$${fmt(p.high, p.high>100?2:4)}</td>
+      <td>$${fmt(p.low, p.low>100?2:4)}</td>
+      <td style="text-align:right">
+        <div class="action-btns" style="justify-content:flex-end">
+          <button class="btn btn-sm btn-green" onclick="quickOrder('${p.symbol}')"><i class="fas fa-bolt"></i></button>
+        </div>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+// ── Orders ──
+function setOrderSide(side) {
+  _side = side;
+  document.getElementById('tabBuy').className = 'order-tab' + (side==='buy' ? ' active-buy' : '');
+  document.getElementById('tabSell').className = 'order-tab' + (side==='sell' ? ' active-sell' : '');
+}
+
+function quickOrder(symbol) {
+  document.getElementById('orderSymbol').value = symbol;
+  document.getElementById('orderSymbol').scrollIntoView({behavior:'smooth',block:'center'});
+}
+
+async function submitOrder() {
+  const symbol = document.getElementById('orderSymbol').value;
+  const amountUSD = parseFloat(document.getElementById('orderAmount').value);
+  if (!symbol || !amountUSD || amountUSD < 1) { alert('Completá el monto'); return; }
+  const el = document.getElementById('orderResult');
+  el.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Enviando...';
+  const r = await api('POST', '/crypto/order', { symbol, side: _side, amountUSD });
+  if (!r || r.error) { el.innerHTML = `<span style="color:var(--red)">❌ ${r?.error||'Error'}</span>`; return; }
+  el.innerHTML = `<span style="color:var(--green)">✅ ${_side.toUpperCase()} ${r.quantity} ${symbol} @ $${fmt(r.price)}</span>`;
+  loadBalance(); loadPositions();
+}
+
+// ── AI Config ──
+async function loadConfig() {
+  const cfg = await api('GET', '/crypto/config');
+  if (!cfg) return;
+  document.getElementById('aiEnabled').checked = !!cfg.enabled;
+  document.getElementById('cfgMaxTrade').value = cfg.max_per_trade_usd || 10;
+  document.getElementById('cfgMinConf').value = ((cfg.min_confidence||0.7)*100).toFixed(0);
+  document.getElementById('cfgSL').value = cfg.stop_loss_pct || 5;
+  document.getElementById('cfgTP').value = cfg.take_profit_pct || 8;
+  document.getElementById('cfgRisk').value = cfg.risk_level || 'medium';
+  const badge = document.getElementById('aiStatusBadge');
+  badge.className = 'ai-status ' + (cfg.enabled ? 'ai-active' : 'ai-inactive');
+  badge.textContent = cfg.enabled ? '🟢 Activo' : '⏸ Inactivo';
+}
+
+async function saveConfig() {
+  const cfg = {
+    max_per_trade_usd: parseFloat(document.getElementById('cfgMaxTrade').value),
+    min_confidence: parseFloat(document.getElementById('cfgMinConf').value) / 100,
+    stop_loss_pct: parseFloat(document.getElementById('cfgSL').value),
+    take_profit_pct: parseFloat(document.getElementById('cfgTP').value),
+    risk_level: document.getElementById('cfgRisk').value,
+  };
+  await api('PUT', '/crypto/config', cfg);
+  loadConfig();
+  alert('✅ Configuración guardada');
+}
+
+async function toggleAI() {
+  const enabled = document.getElementById('aiEnabled').checked;
+  await api('POST', enabled ? '/crypto/enable' : '/crypto/disable');
+  loadConfig();
+}
+
+async function triggerAnalysis() {
+  const btn = document.getElementById('btnAnalyze');
+  btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Analizando...';
+  const r = await api('POST', '/crypto/analyze');
+  btn.disabled = false; btn.innerHTML = '<i class="fas fa-brain"></i> Analizar Ahora';
+  if (!r || r.error) { alert('Error: ' + (r?.error||'desconocido')); return; }
+  if (r.result) {
+    _lastAnalysis = r.result;
+    if (r.result.analysis) document.getElementById('aiAnalysis').textContent = r.result.analysis;
+    const sent = r.result.market_sentiment || 'NEUTRAL';
+    const colors = { BULLISH:'var(--green)', BEARISH:'var(--red)', NEUTRAL:'var(--amber)' };
+    document.getElementById('aiSentiment').style.color = colors[sent] || 'var(--amber)';
+    document.getElementById('aiSentiment').textContent = sent;
+  }
+  loadPositions(); loadHistory();
+}
+
+// ── WebSocket ──
+function connectWS() {
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const ws = new WebSocket(`${proto}//${location.host}/ws`);
+  ws.onmessage = (e) => {
+    try {
+      const msg = JSON.parse(e.data);
+      if (msg.type === 'crypto_analysis') {
+        _lastAnalysis = msg.data;
+        if (msg.data.analysis) document.getElementById('aiAnalysis').textContent = msg.data.analysis;
+        loadPositions();
+      }
+      if (msg.type === 'crypto_sell') { loadPositions(); loadBalance(); loadHistory(); }
+    } catch {}
+  };
+  ws.onclose = () => setTimeout(connectWS, 5000);
+  ws.onerror = () => {};
+}
+
+// ── Init ──
+document.addEventListener('DOMContentLoaded', () => {
+  loadBalance();
+  loadPositions();
+  loadMarket();
+  loadConfig();
+  loadHistory();
+  connectWS();
+  setInterval(loadMarket, 30000);
+  setInterval(loadBalance, 60000);
+  setInterval(loadPositions, 30000);
+});
+</script>
+</body>
+</html>

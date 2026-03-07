@@ -1,5 +1,6 @@
 const ccxt = require('ccxt');
 const https = require('https');
+const { SocksProxyAgent } = require('socks-proxy-agent');
 const { decrypt } = require('./encryption');
 const { getDB } = require('../models/db');
 
@@ -83,12 +84,27 @@ function createExchange(apiKeyRow) {
     };
     if (process.env.BINANCE_PROXY) {
       const proxy = process.env.BINANCE_PROXY;
-      if (proxy.startsWith('socks')) config.socksProxy = proxy;
-      else config.httpsProxy = proxy;
+      const proxyUrl = proxy.replace('socks5h://', 'socks5://');
+      if (proxy.startsWith('socks')) {
+        config.socksProxy = proxyUrl;
+        const agent = new SocksProxyAgent(proxyUrl);
+        config.httpAgent = agent;
+        config.httpsAgent = agent;
+      } else {
+        config.httpsProxy = proxy;
+      }
     }
   }
 
-  return new ExchangeClass(config);
+  const exchange = new ExchangeClass(config);
+  // Force agent on instance for maximum compatibility
+  if (exchangeName === 'binance' && process.env.BINANCE_PROXY && process.env.BINANCE_PROXY.startsWith('socks')) {
+    const proxyUrl = process.env.BINANCE_PROXY.replace('socks5h://', 'socks5://');
+    const agent = new SocksProxyAgent(proxyUrl);
+    exchange.httpAgent = agent;
+    exchange.httpsAgent = agent;
+  }
+  return exchange;
 }
 
 function getExchangeForUser(userId, apiKeyId) {
@@ -108,22 +124,62 @@ async function getBalances(userId, apiKeyId) {
   return assets;
 }
 
-// ── Market data via CoinGecko (with cache to avoid rate limits) ──
+// ── Shared exchange for public data (tickers, without API keys) ──
+
+let _sharedExchange = null;
+let _sharedExchangeTs = 0;
+
+function _getSharedExchange() {
+  const now = Date.now();
+  if (_sharedExchange && (now - _sharedExchangeTs) < 300000) return _sharedExchange;
+  const config = { enableRateLimit: true, options: { defaultType: 'spot' } };
+  if (process.env.BINANCE_PROXY) {
+    const proxy = process.env.BINANCE_PROXY;
+    const proxyUrl = proxy.replace('socks5h://', 'socks5://');
+    if (proxy.startsWith('socks')) {
+      config.socksProxy = proxyUrl;
+      const agent = new SocksProxyAgent(proxyUrl);
+      config.httpAgent = agent;
+      config.httpsAgent = agent;
+    }
+  }
+  _sharedExchange = new ccxt.binance(config);
+  if (process.env.BINANCE_PROXY && process.env.BINANCE_PROXY.startsWith('socks')) {
+    const proxyUrl = process.env.BINANCE_PROXY.replace('socks5h://', 'socks5://');
+    const agent = new SocksProxyAgent(proxyUrl);
+    _sharedExchange.httpAgent = agent;
+    _sharedExchange.httpsAgent = agent;
+  }
+  _sharedExchangeTs = now;
+  return _sharedExchange;
+}
+
+// ── Market data: Binance via proxy first, CoinGecko fallback ──
 
 async function getTicker(pair) {
+  // Try Binance exchange via proxy
+  try {
+    const exchange = _getSharedExchange();
+    const ticker = await exchange.fetchTicker(pair);
+    if (ticker && ticker.last > 0) {
+      return { symbol: pair, last: ticker.last, percentage: ticker.percentage || 0, quoteVolume: ticker.quoteVolume || 0 };
+    }
+  } catch {}
+  // Fallback: CoinGecko
   const id = getGeckoId(pair);
   const url = 'https://api.coingecko.com/api/v3/simple/price?ids=' + id + '&vs_currencies=usd&include_24hr_change=true&include_24hr_vol=true';
   const json = await cachedFetch('ticker_' + id, url, 30000);
   const d = json[id] || {};
-  return {
-    symbol: pair,
-    last: d.usd || 0,
-    percentage: d.usd_24h_change || 0,
-    quoteVolume: d.usd_24h_vol || 0,
-  };
+  return { symbol: pair, last: d.usd || 0, percentage: d.usd_24h_change || 0, quoteVolume: d.usd_24h_vol || 0 };
 }
 
 async function getOHLCV(pair, timeframe, limit) {
+  // Try Binance exchange via proxy
+  try {
+    const exchange = _getSharedExchange();
+    return await exchange.fetchOHLCV(pair, timeframe, undefined, limit || 100);
+  } catch {}
+  // Fallback: CoinGecko
   const id = getGeckoId(pair);
   const days = timeframe === '1d' ? limit : timeframe === '4h' ? Math.ceil(limit / 6) : timeframe === '1h' ? Math.ceil(limit / 24) : Math.ceil(limit / 288);
   const clampedDays = Math.min(days, 90);
@@ -159,17 +215,38 @@ async function testConnection(userId, apiKeyId) {
 }
 
 async function getTopPairs() {
+  const TOP = ['BTC/USDT','ETH/USDT','BNB/USDT','SOL/USDT','XRP/USDT','ADA/USDT','DOGE/USDT','AVAX/USDT','LINK/USDT','DOT/USDT','SHIB/USDT','LTC/USDT','TRX/USDT','ATOM/USDT','UNI/USDT','NEAR/USDT','ARB/USDT','APT/USDT','FIL/USDT','MATIC/USDT'];
+  // Try Binance exchange via proxy
+  try {
+    const exchange = _getSharedExchange();
+    const tickers = await exchange.fetchTickers(TOP);
+    return Object.values(tickers).map(t => ({
+      symbol: t.symbol, price: t.last || 0, change24h: t.percentage || 0,
+      volume: t.quoteVolume || 0, high: t.high || 0, low: t.low || 0,
+    }));
+  } catch {}
+  // Fallback: CoinGecko
   const url = 'https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=20&page=1&sparkline=false&price_change_percentage=24h';
   const json = await cachedFetch('top_pairs', url, 60000);
   if (!Array.isArray(json)) return [];
   return json.map(c => ({
     symbol: (c.symbol || '').toUpperCase() + '/USDT',
-    price: c.current_price || 0,
-    change24h: c.price_change_percentage_24h || 0,
-    volume: c.total_volume || 0,
-    high: c.high_24h || 0,
-    low: c.low_24h || 0,
+    price: c.current_price || 0, change24h: c.price_change_percentage_24h || 0,
+    volume: c.total_volume || 0, high: c.high_24h || 0, low: c.low_24h || 0,
   }));
 }
 
-module.exports = { getBalances, getTicker, getOHLCV, createOrder, testConnection, getExchangeForUser, getTopPairs, SUPPORTED_EXCHANGES };
+async function getFirstBinanceBalance() {
+  const db = getDB();
+  const row = db.prepare("SELECT * FROM api_keys WHERE exchange = 'binance' LIMIT 1").get();
+  if (!row) return null;
+  const exchange = createExchange(row);
+  const balance = await exchange.fetchBalance();
+  const assets = {};
+  for (const [coin, info] of Object.entries(balance.total)) {
+    if (info > 0) assets[coin] = { total: info, free: balance.free[coin] || 0, used: balance.used[coin] || 0 };
+  }
+  return assets;
+}
+
+module.exports = { getBalances, getTicker, getOHLCV, createOrder, testConnection, getExchangeForUser, getTopPairs, getFirstBinanceBalance, SUPPORTED_EXCHANGES };
