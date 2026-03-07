@@ -63,11 +63,18 @@ SOLUCIÓN: Túnel SSH reverso desde la PC del usuario (Argentina) que crea un pr
 ## BUGS ACTUALES QUE NECESITAN FIX
 
 ### 1. BINANCE LIVE NO EJECUTA (CRITICO)
-ccxt no está usando el proxy SOCKS correctamente. `curl --socks5` funciona pero ccxt sigue dando "Unsupported state or unable to authenticate data". 
-Posible causa: ccxt necesita `socksProxy` con formato específico o `socks-proxy-agent` no está integrado bien.
+ccxt no está usando el proxy SOCKS. El túnel SSH FUNCIONA confirmado:
+```
+curl --socks5 127.0.0.1:1080 'https://api.binance.com/api/v3/account' -H 'X-MBX-APIKEY: XvcLb...' 
+→ {"code":-1102,"msg":"Mandatory parameter 'signature' was not sent..."}  (= BINANCE RESPONDE, falta firma)
+```
+Pero ccxt sigue dando "Unsupported state or unable to authenticate data" (= no usa el proxy, va directo y Binance bloquea).
+
 El `.env` tiene `BINANCE_PROXY=socks5h://127.0.0.1:1080`.
-En binance.js: `config.socksProxy = proxy` (cuando proxy empieza con 'socks').
-**PROBAR**: crear un script que instancie ccxt binance con el proxy y haga `exchange.fetchBalance()` para depurar.
+En `src/services/binance.js` línea 84-88: `config.socksProxy = proxy` (cuando proxy empieza con 'socks').
+El paquete `socks-proxy-agent@8.0.5` está instalado.
+
+**LO QUE HAY QUE HACER**: Crear un test script en el VPS que instancie ccxt.binance con `{ socksProxy: 'socks5h://127.0.0.1:1080' }` y haga `exchange.fetchBalance()`. Si falla, probar con `socksProxy: 'socks5://127.0.0.1:1080'`, o con `httpProxy`/`httpsProxy` usando un proxy HTTP local, o configurar `agent` manualmente con `socks-proxy-agent`. Este es el UNICO blocker para trading real.
 
 ### 2. DASHBOARD NO CARGA DATOS AL ABRIR
 Al abrir autotrader.centralchat.pro/dashboard, las stats (bots, operaciones, volumen, PnL) quedan en 0.
