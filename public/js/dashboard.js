@@ -98,16 +98,13 @@
 
     apiFetch('/crypto/summary').then(s => {
       if (!s || s.error) return;
-      document.getElementById('totalTrades').textContent = s.total_positions || 0;
+      // Only count LIVE trades (not paper)
+      document.getElementById('totalTrades').textContent = s.live_trades || s.total_positions || 0;
+      document.getElementById('totalVolume').textContent = formatUSD(s.live_volume || 0);
       const pnl = s.total_pnl || 0;
       document.getElementById('totalPnl').textContent = (pnl >= 0 ? '+' : '') + formatUSD(pnl);
       const pnlIcon = document.getElementById('pnlIcon');
       if (pnlIcon) pnlIcon.className = 'stat-icon ' + (pnl >= 0 ? 'green' : 'red');
-    }).catch(() => {});
-
-    apiFetch('/trading/trades/summary').then(s => {
-      if (!s || s.error) return;
-      document.getElementById('totalVolume').textContent = formatUSD(s.volume || 0);
     }).catch(() => {});
 
     // Crypto history as recent trades — only REAL trades (not paper)
@@ -134,18 +131,34 @@
       }).join('');
     }).catch(() => {});
 
-    // Balance (slowest — goes through SOCKS proxy, load independently)
+    // Balance: show total portfolio estimate (USDT + crypto at current prices)
     apiFetch('/crypto/balance').then(bal => {
       const balEl = document.getElementById('binanceBalance');
+      const freeEl = document.getElementById('binanceFree');
       if (bal && typeof bal === 'object' && !bal.error) {
-        if (bal.USDT) {
-          balEl.textContent = '$' + formatNum(bal.USDT.free || bal.USDT.total || 0);
-        } else {
-          const total = Object.values(bal).reduce((s, a) => s + (a.total || 0), 0);
-          balEl.textContent = total > 0 ? '$' + formatNum(total) : '$0.00';
+        const usdtFree = bal.USDT?.free || 0;
+        const usdtTotal = bal.USDT?.total || 0;
+        // Estimate total portfolio in USD (USDT + crypto positions value)
+        let portfolioTotal = usdtTotal;
+        const cryptoHoldings = [];
+        for (const [coin, info] of Object.entries(bal)) {
+          if (coin === 'USDT' || !info.total || info.total <= 0) continue;
+          cryptoHoldings.push(coin + ': ' + formatNum(info.total, 4));
         }
+        // Add open position values
+        const posEls = document.querySelectorAll('#cryptoPositions tr');
+        posEls.forEach(tr => {
+          const cells = tr.querySelectorAll('td');
+          if (cells.length >= 5) {
+            const current = parseFloat((cells[4]?.textContent || '0').replace(/[^0-9.,]/g, '').replace(',', '.'));
+            const qty = parseFloat((cells[2]?.textContent || '0').replace(/[^0-9.,]/g, '').replace(',', '.'));
+            if (current > 0 && qty > 0) portfolioTotal += current * qty;
+          }
+        });
+        balEl.textContent = '$' + formatNum(portfolioTotal);
+        if (freeEl) freeEl.textContent = 'Libre: $' + formatNum(usdtFree);
       } else {
-        balEl.textContent = bal?.error ? 'Reconectando...' : '$---';
+        balEl.textContent = bal?.error ? '...' : '$---';
       }
     }).catch(() => {
       document.getElementById('binanceBalance').textContent = '$---';
