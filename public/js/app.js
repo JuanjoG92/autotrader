@@ -53,7 +53,7 @@ function formatUSD(n) {
 
 function formatDate(d) {
   if (!d) return '---';
-  return new Date(d).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' });
+  return new Date(d).toLocaleString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires', day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' });
 }
 
 function showModal(id) { document.getElementById(id).classList.add('open'); }
