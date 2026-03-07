@@ -209,14 +209,29 @@ RESPONDE SOLO JSON:
 
   for (const sig of signals) {
     if (!sig.ticker || sig.confidence < cfg.min_confidence) continue;
+
+    // Si la IA no calculó precio o cantidad, obtenerlos de Cocos
+    if (!sig.price || sig.price <= 0) {
+      try {
+        const q = await cocos.getQuote(sig.ticker, 'C');
+        sig.price = q?.last_price || q?.close_price || 0;
+      } catch {}
+    }
+    if ((!sig.quantity || sig.quantity <= 0) && sig.price > 0 && sig.action === 'BUY') {
+      sig.quantity = Math.max(1, Math.floor((cfg.max_per_trade_ars || 50000) / sig.price));
+    }
+
     const saved = saveSignal({ ...sig, analysis: result.analysis });
+
     if (cfg.auto_execute && marketOpen && sig.price > 0 && sig.quantity > 0) {
       try {
         let ord;
         if (sig.action==='BUY')  ord = await cocos.placeBuyOrder(sig.ticker, sig.quantity, sig.price, '24hs', 'ARS', 'C');
         if (sig.action==='SELL') ord = await cocos.placeSellOrder(sig.ticker, sig.quantity, sig.price, '24hs', 'ARS', 'C');
-        if (ord) { markSignalExecuted(saved.lastInsertRowid, ord.Orden||ord.id||'OK'); console.log(`[AI-Trader] Ejecutado: ${sig.action} ${sig.ticker} x${sig.quantity}`); }
+        if (ord) { markSignalExecuted(saved.lastInsertRowid, ord.Orden||ord.id||'OK'); console.log(`[AI-Trader] ✅ Ejecutado: ${sig.action} ${sig.ticker} x${sig.quantity} @ $${sig.price}`); }
       } catch (e) { console.error(`[AI-Trader] Error ejecutando ${sig.ticker}:`, e.message); }
+    } else if (cfg.auto_execute && !marketOpen) {
+      console.log(`[AI-Trader] Señal guardada (mercado cerrado): ${sig.action} ${sig.ticker} conf:${(sig.confidence*100).toFixed(0)}%`);
     }
   }
 
