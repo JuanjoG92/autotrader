@@ -107,56 +107,43 @@
       if (pnlIcon) pnlIcon.className = 'stat-icon ' + (pnl >= 0 ? 'green' : 'red');
     }).catch(() => {});
 
-    // Crypto history as recent trades — only REAL trades (not paper)
+    // All operations history (LIVE trades marked, paper excluded if closed)
     apiFetch('/crypto/history?limit=20').then(history => {
       if (!history || !Array.isArray(history) || !history.length) return;
       const tbody = document.getElementById('recentTrades');
-      // Filter: only show LIVE trades (order_id not starting with PAPER)
-      const real = history.filter(t => t.order_id && !t.order_id.startsWith('PAPER'));
-      if (!real.length) {
+      // Show: all LIVE trades + OPEN positions (even paper ones that are being monitored)
+      const relevant = history.filter(t => {
+        const isLive = t.order_id && !t.order_id.startsWith('PAPER');
+        const isOpen = t.status === 'OPEN';
+        return isLive || isOpen;
+      });
+      if (!relevant.length) {
         tbody.innerHTML = '<tr><td colspan="6" class="empty">Sin operaciones reales aún</td></tr>';
         return;
       }
-      tbody.innerHTML = real.map(t => {
+      tbody.innerHTML = relevant.map(t => {
         const dt = formatDate(t.created_at);
-        const status = t.status === 'CLOSED' ? '✅' : '🔄';
+        const isLive = t.order_id && !t.order_id.startsWith('PAPER');
+        const icon = isLive ? '✅' : '📋';
+        const sideCls = t.side === 'SELL' ? 'tag-sell' : 'tag-buy';
         return `<tr>
           <td>${dt}</td>
           <td><strong>${t.symbol}</strong></td>
-          <td><span class="tag-buy">${t.side || 'BUY'}</span></td>
+          <td><span class="${sideCls}">${t.side || 'BUY'}</span></td>
           <td>${formatNum(t.quantity, 6)}</td>
           <td>$${formatNum(t.entry_price)}</td>
-          <td>$${formatNum(t.entry_price * t.quantity)} ${status}</td>
+          <td>$${formatNum(t.entry_price * t.quantity)} ${icon}</td>
         </tr>`;
       }).join('');
     }).catch(() => {});
 
-    // Balance: show total portfolio estimate (USDT + crypto at current prices)
+    // Balance: use server-calculated total
     apiFetch('/crypto/balance').then(bal => {
       const balEl = document.getElementById('binanceBalance');
       const freeEl = document.getElementById('binanceFree');
       if (bal && typeof bal === 'object' && !bal.error) {
-        const usdtFree = bal.USDT?.free || 0;
-        const usdtTotal = bal.USDT?.total || 0;
-        // Estimate total portfolio in USD (USDT + crypto positions value)
-        let portfolioTotal = usdtTotal;
-        const cryptoHoldings = [];
-        for (const [coin, info] of Object.entries(bal)) {
-          if (coin === 'USDT' || !info.total || info.total <= 0) continue;
-          cryptoHoldings.push(coin + ': ' + formatNum(info.total, 4));
-        }
-        // Add open position values
-        const posEls = document.querySelectorAll('#cryptoPositions tr');
-        posEls.forEach(tr => {
-          const cells = tr.querySelectorAll('td');
-          if (cells.length >= 5) {
-            const current = parseFloat((cells[4]?.textContent || '0').replace(/[^0-9.,]/g, '').replace(',', '.'));
-            const qty = parseFloat((cells[2]?.textContent || '0').replace(/[^0-9.,]/g, '').replace(',', '.'));
-            if (current > 0 && qty > 0) portfolioTotal += current * qty;
-          }
-        });
-        balEl.textContent = '$' + formatNum(portfolioTotal);
-        if (freeEl) freeEl.textContent = 'Libre: $' + formatNum(usdtFree);
+        balEl.textContent = '$' + formatNum(bal._totalUSD || 0);
+        if (freeEl) freeEl.textContent = 'Libre: $' + formatNum(bal._freeUSDT || 0);
       } else {
         balEl.textContent = bal?.error ? '...' : '$---';
       }

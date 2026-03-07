@@ -70,11 +70,25 @@ router.get('/summary', (req, res) => {
   });
 });
 
-// Balance Binance (primera key disponible)
+// Balance Binance con valor total estimado en USD
 router.get('/balance', async (req, res) => {
   try {
     const bal = await binance.getFirstBinanceBalance();
-    res.json(bal || {});
+    if (!bal) return res.json({});
+    // Calculate total portfolio value in USD
+    let totalUSD = 0;
+    const usdtFree = bal.USDT?.free || 0;
+    totalUSD += bal.USDT?.total || 0;
+    // Estimate non-USDT assets value using live prices
+    for (const [coin, info] of Object.entries(bal)) {
+      if (coin === 'USDT' || !info.total || info.total <= 0) continue;
+      try {
+        const ticker = await binance.getTicker(coin + '/USDT');
+        const price = ticker?.last || 0;
+        if (price > 0) totalUSD += info.total * price;
+      } catch {}
+    }
+    res.json({ ...bal, _totalUSD: Math.round(totalUSD * 100) / 100, _freeUSDT: Math.round(usdtFree * 100) / 100 });
   } catch (e) {
     console.log('[Crypto] Balance error:', (e.message || '').substring(0, 100));
     res.json({ error: e.message || 'Error obteniendo balance' });
