@@ -54,25 +54,20 @@ function _saveSession(access, refresh, expiresAt, accountId) {
 
 // ── HTTP ─────────────────────────────────────────────────────────────────────
 
-let _reloginAttempted = false; // evitar loops de relogin
+let _reloginAttempted = false;
 
 async function _call(method, path, body, tokenOverride) {
   const token = tokenOverride || _session.accessToken;
   if (!token) throw new Error('Sin sesión Cocos activa');
 
-  const hdrs = {
-    'Content-Type':  'application/json',
-    'apikey':        ANON_KEY,
-    'Authorization': `Bearer ${token}`,
-    'x-account-id':  String(_session.accountId),
-    'User-Agent':    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-    'Accept':        'application/json',
-    'Origin':        'https://app.cocos.capital',
-    'Referer':       'https://app.cocos.capital/',
-  };
-
   const res = await fetch(`${BASE_URL}/${path}`, {
-    method, headers: hdrs,
+    method,
+    headers: {
+      'Content-Type':  'application/json',
+      'apikey':        ANON_KEY,
+      'Authorization': `Bearer ${token}`,
+      'x-account-id':  String(_session.accountId),
+    },
     body: body ? JSON.stringify(body) : undefined,
   });
 
@@ -83,17 +78,16 @@ async function _call(method, path, body, tokenOverride) {
   if (!res.ok) {
     const msg = data?.message || data?.error || `HTTP ${res.status}`;
 
-    // Auto-relogin si Cocos pide MFA upgrade o JWT expirado
+    // Si Cocos pide MFA upgrade o JWT expiró → browser login automático
     const needsRelogin = (res.status === 401 || res.status === 403) &&
       (msg.includes('ssurance') || msg.includes('upgrade') || msg.includes('jwt expired'));
 
     if (needsRelogin && !_reloginAttempted && !tokenOverride) {
       _reloginAttempted = true;
-      console.log(`[Cocos] ${msg} — intentando re-login automático...`);
+      console.log(`[Cocos] ${msg} — re-login con browser...`);
       try {
-        await _fullLogin();
+        await _browserLogin();
         _reloginAttempted = false;
-        // Reintentar la llamada original con el nuevo token
         return _call(method, path, body);
       } catch (e) {
         _reloginAttempted = false;
@@ -137,123 +131,97 @@ function _generateTOTP(secret) {
   return code.toString().padStart(6, '0');
 }
 
-// ── Full Login (fallback) ─────────────────────────────────────────────────────
+// ── Browser Login (Puppeteer — bypassa Cloudflare) ────────────────────────────
 
-// Helper: fetch seguro que detecta Cloudflare challenges y reintenta
-async function _safeFetch(url, opts, retries = 4) {
-  for (let i = 0; i <= retries; i++) {
-    const res = await fetch(url, opts);
-    const ct = res.headers.get('content-type') || '';
-    // Cloudflare devuelve HTML en vez de JSON
-    if (ct.includes('text/html') || (!ct.includes('json') && res.status === 403)) {
-      if (i < retries) {
-        const wait = 5000 + i * 8000; // 5s, 13s, 21s, 29s
-        console.warn(`[Cocos] Cloudflare challenge (intento ${i+1}/${retries+1}), esperando ${Math.round(wait/1000)}s...`);
-        await new Promise(r => setTimeout(r, wait));
-        continue;
-      }
-      throw new Error('Cloudflare bloqueó la request tras ' + (retries+1) + ' intentos');
-    }
-    return res;
-  }
-}
-
-async function _fullLogin() {
+async function _browserLogin() {
   const email    = process.env.COCOS_EMAIL;
   const password = process.env.COCOS_PASSWORD;
   const totpSec  = process.env.COCOS_TOTP;
-
-  if (!email || !password || !totpSec) {
-    throw new Error('Faltan COCOS_EMAIL, COCOS_PASSWORD o COCOS_TOTP en .env');
-  }
-
-  if (_loginInProgress) {
-    throw new Error('Login ya en curso, esperando...');
-  }
+  if (!email || !password || !totpSec) throw new Error('Faltan COCOS_EMAIL/PASSWORD/TOTP en .env');
+  if (_loginInProgress) throw new Error('Login en curso');
   _loginInProgress = true;
 
+  let browser;
   try {
-    console.log('[Cocos] Iniciando full-login con email+password+TOTP...');
-
-    const authHeaders = {
-      'Content-Type':  'application/json',
-      'apikey':        ANON_KEY,
-      'Authorization': `Bearer ${ANON_KEY}`,
-      'User-Agent':    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-      'Accept':        'application/json',
-      'Origin':        'https://app.cocos.capital',
-      'Referer':       'https://app.cocos.capital/',
-    };
-
-    // Paso 1: Login con email + password
-    const loginRes = await _safeFetch(`${BASE_URL}/auth/v1/token?grant_type=password`, {
-      method: 'POST',
-      headers: authHeaders,
-      body: JSON.stringify({ email, password }),
+    const puppeteer = require('puppeteer');
+    console.log('[Cocos] Lanzando Chrome headless para login...');
+    browser = await puppeteer.launch({
+      headless: 'new',
+      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu'],
     });
+    const page = await browser.newPage();
+    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36');
 
-    const loginData = await loginRes.json();
+    // 1. Navegar al dominio API para resolver Cloudflare
+    console.log('[Cocos] Resolviendo Cloudflare...');
+    await page.goto(BASE_URL, { waitUntil: 'networkidle0', timeout: 60000 });
 
-    if (!loginData.access_token) {
+    // 2. Login email + password (desde el contexto del browser, CF ya resuelto)
+    console.log('[Cocos] Enviando credenciales...');
+    const loginData = await page.evaluate(async (e, p, ak, bu) => {
+      try {
+        const r = await fetch(bu + '/auth/v1/token?grant_type=password', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'apikey': ak, 'Authorization': 'Bearer ' + ak },
+          body: JSON.stringify({ email: e, password: p }),
+        });
+        return await r.json();
+      } catch (err) { return { error: err.message }; }
+    }, email, password, ANON_KEY, BASE_URL);
+
+    if (loginData.error || !loginData.access_token) {
       throw new Error('Login falló: ' + JSON.stringify(loginData).substring(0, 300));
     }
+    console.log('[Cocos] Login OK (aal1)');
 
-    // Paso 2: Verificar si necesita MFA (aal2)
-    // Supabase devuelve access_token aal1 + user.factors con los factores MFA
-    const factors = loginData.user?.factors || loginData.mfa?.factors || [];
+    // 3. Verificar si necesita MFA
+    const factors = loginData.user?.factors || [];
     const totpFactor = factors.find(f => f.factor_type === 'totp' && f.status === 'verified');
+    const accountId = parseInt(process.env.COCOS_ACCOUNT_ID || '1391716');
 
     if (!totpFactor) {
-      // Sin factor MFA — login directo (aal1 suficiente)
-      console.log('[Cocos] Login sin MFA (aal1)');
-      const accountId = parseInt(process.env.COCOS_ACCOUNT_ID || '1391716');
       _saveSession(loginData.access_token, loginData.refresh_token, loginData.expires_at, accountId);
       _ready = true;
-      console.log('[Cocos] ✅ Full-login exitoso —', new Date().toLocaleString('es-AR'));
+      console.log('[Cocos] ✅ Login exitoso (sin MFA) —', new Date().toLocaleString('es-AR'));
       return loginData.access_token;
     }
 
-    console.log('[Cocos] MFA requerido (aal1→aal2), factor:', totpFactor.id);
-
-    // Paso 3: Challenge — usar el access_token aal1 para autenticarse
-    const mfaHeaders = { ...authHeaders, 'Authorization': `Bearer ${loginData.access_token}` };
-    const challengeRes = await _safeFetch(`${BASE_URL}/auth/v1/factors/${totpFactor.id}/challenge`, {
-      method: 'POST',
-      headers: mfaHeaders,
-    });
-
-    const challengeData = await challengeRes.json();
-    const challengeId = challengeData.id;
-    if (!challengeId) {
-      throw new Error('Challenge sin ID: ' + JSON.stringify(challengeData).substring(0, 300));
-    }
-
-    console.log('[Cocos] Challenge recibido:', challengeId);
-
-    // Paso 4: Generar TOTP y verificar
+    // 4. MFA Challenge + Verify
+    console.log('[Cocos] MFA requerido → challenge + TOTP...');
     const totpCode = _generateTOTP(totpSec);
-    console.log('[Cocos] TOTP generado (6 dígitos)');
 
-    const verifyRes = await _safeFetch(`${BASE_URL}/auth/v1/factors/${totpFactor.id}/verify`, {
-      method: 'POST',
-      headers: mfaHeaders,
-      body: JSON.stringify({ challenge_id: challengeId, code: totpCode }),
-    });
+    const verifyData = await page.evaluate(async (fid, at, code, ak, bu) => {
+      try {
+        // Challenge
+        const cr = await fetch(bu + '/auth/v1/factors/' + fid + '/challenge', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'apikey': ak, 'Authorization': 'Bearer ' + at },
+        });
+        const cd = await cr.json();
+        if (!cd.id) return { error: 'Challenge falló: ' + JSON.stringify(cd) };
 
-    const verifyData = await verifyRes.json();
+        // Verify
+        const vr = await fetch(bu + '/auth/v1/factors/' + fid + '/verify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'apikey': ak, 'Authorization': 'Bearer ' + at },
+          body: JSON.stringify({ challenge_id: cd.id, code: code }),
+        });
+        return await vr.json();
+      } catch (err) { return { error: err.message }; }
+    }, totpFactor.id, loginData.access_token, totpCode, ANON_KEY, BASE_URL);
 
-    if (!verifyData.access_token) {
-      throw new Error('Verify MFA falló: ' + JSON.stringify(verifyData).substring(0, 300));
+    if (verifyData.error || !verifyData.access_token) {
+      throw new Error('MFA falló: ' + JSON.stringify(verifyData).substring(0, 300));
     }
 
-    const accountId = parseInt(process.env.COCOS_ACCOUNT_ID || '1391716');
     _saveSession(verifyData.access_token, verifyData.refresh_token, verifyData.expires_at, accountId);
     _ready = true;
-    console.log('[Cocos] ✅ Full-login con MFA (aal2) exitoso —', new Date().toLocaleString('es-AR'));
+    console.log('[Cocos] ✅ Login con MFA (aal2) exitoso —', new Date().toLocaleString('es-AR'));
     return verifyData.access_token;
 
   } finally {
     _loginInProgress = false;
+    if (browser) try { await browser.close(); } catch {}
   }
 }
 
@@ -262,19 +230,21 @@ async function _fullLogin() {
 async function _refresh() {
   if (!_session.refreshToken) throw new Error('Sin refresh token');
 
-  const res = await _safeFetch(`${BASE_URL}/auth/v1/token?grant_type=refresh_token`, {
+  const res = await fetch(`${BASE_URL}/auth/v1/token?grant_type=refresh_token`, {
     method: 'POST',
     headers: {
       'Content-Type':  'application/json',
       'apikey':        ANON_KEY,
       'Authorization': `Bearer ${ANON_KEY}`,
-      'User-Agent':    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-      'Accept':        'application/json',
-      'Origin':        'https://app.cocos.capital',
-      'Referer':       'https://app.cocos.capital/',
     },
     body: JSON.stringify({ refresh_token: _session.refreshToken }),
   });
+
+  // Cloudflare devuelve HTML → necesitamos browser login
+  const ct = res.headers.get('content-type') || '';
+  if (ct.includes('text/html') || res.status === 403) {
+    throw new Error('Cloudflare bloqueó refresh — se usará browser login');
+  }
 
   const data = await res.json();
   if (!data.access_token) throw new Error('Refresh inválido: ' + JSON.stringify(data));
@@ -291,13 +261,12 @@ function _startTimer() {
     try {
       await _refresh();
     } catch (e) {
-      console.error('[Cocos] Error auto-refresh:', e.message);
-      console.log('[Cocos] Intentando full-login como fallback...');
+      console.warn('[Cocos] Refresh falló:', e.message);
       try {
-        await _fullLogin();
-        console.log('[Cocos] ✅ Recuperado via full-login');
+        await _browserLogin();
+        console.log('[Cocos] ✅ Recuperado via browser login');
       } catch (e2) {
-        console.error('[Cocos] ❌ Full-login también falló:', e2.message);
+        console.error('[Cocos] ❌ Browser login falló:', e2.message);
         _ready = false;
       }
     }
@@ -307,92 +276,53 @@ function _startTimer() {
 // ── Init ──────────────────────────────────────────────────────────────────────
 
 async function init() {
-  // 1. Intentar cargar desde DB
   let loaded = _loadSession();
 
-  // 2. Si no hay en DB, migrar desde .env (primer arranque)
   if (!loaded && process.env.COCOS_REFRESH_TOKEN) {
-    console.log('[Cocos] Migrando tokens desde .env a DB...');
     const accessToken  = process.env.COCOS_ACCESS_TOKEN  || '';
     const refreshToken = process.env.COCOS_REFRESH_TOKEN;
     const accountId    = parseInt(process.env.COCOS_ACCOUNT_ID || '1391716');
-    const expiresAt    = Math.floor(Date.now() / 1000) + 3600;
-    _saveSession(accessToken, refreshToken, expiresAt, accountId);
+    _saveSession(accessToken, refreshToken, Math.floor(Date.now() / 1000) + 3600, accountId);
     loaded = true;
   }
 
-  if (!loaded) {
-    // Sin sesión previa — intentar full-login directo
-    if (process.env.COCOS_EMAIL && process.env.COCOS_PASSWORD && process.env.COCOS_TOTP) {
-      console.log('[Cocos] Sin sesión previa, intentando full-login...');
-      try {
-        await _fullLogin();
-        _startTimer();
-        console.log('[Cocos] Servicio activo. Account ID:', _session.accountId);
-        return;
-      } catch (e) {
-        console.error('[Cocos] Full-login falló:', e.message);
-      }
-    }
-    console.warn('[Cocos] Sin credenciales. Actualiza tokens desde el panel admin.');
-    return;
-  }
-
-  // 3. Refresh inmediato para obtener token fresco
-  try {
-    await _refresh();
-  } catch (e) {
-    console.error('[Cocos] Error en refresh inicial:', e.message);
-    // Fallback: full-login con email+password+TOTP
-    console.log('[Cocos] Intentando full-login como fallback...');
+  // Intentar refresh rápido primero (si tenemos tokens)
+  if (loaded) {
     try {
-      await _fullLogin();
-      console.log('[Cocos] ✅ Recuperado via full-login');
-    } catch (e2) {
-      console.error('[Cocos] Full-login falló:', e2.message);
-      // Último recurso: usar token existente si no expiró
-      const now = Math.floor(Date.now() / 1000);
-      if (_session.expiresAt > now + 60) {
-        _ready = true;
-        console.warn('[Cocos] Usando token almacenado (expira en', Math.round((_session.expiresAt - now) / 60), 'min)');
-      }
-    }
-  }
-
-  _startTimer();
-
-  // Siempre programar reintentos si no se logró MFA completo
-  _scheduleReloginIfNeeded();
-
-  console.log('[Cocos] Servicio activo. Account ID:', _session.accountId);
-}
-
-// Intenta fullLogin cada 5 min en background hasta tener aal2
-let _reloginRetryTimer = null;
-function _scheduleReloginIfNeeded() {
-  if (_reloginRetryTimer) return;
-  _reloginRetryTimer = setInterval(async () => {
-    if (!_ready) return;
-    try {
-      // Testear si tenemos aal2 intentando un endpoint financiero
-      await _call('GET', 'api/v2/orders/buying-power');
-      console.log('[Cocos] ✅ Token aal2 confirmado — deteniendo reintentos');
-      clearInterval(_reloginRetryTimer);
-      _reloginRetryTimer = null;
+      await _refresh();
+      _startTimer();
+      console.log('[Cocos] Servicio activo. Account ID:', _session.accountId);
+      return;
     } catch (e) {
-      if (e.message?.includes('ssurance') || e.message?.includes('upgrade')) {
-        console.log('[Cocos] Token aal1 detectado, intentando upgrade via fullLogin...');
-        try {
-          await _fullLogin();
-          console.log('[Cocos] ✅ Upgrade a aal2 exitoso');
-          clearInterval(_reloginRetryTimer);
-          _reloginRetryTimer = null;
-        } catch (e2) {
-          console.warn('[Cocos] Reintento fullLogin pendiente:', e2.message);
-        }
-      }
+      console.warn('[Cocos] Refresh falló:', e.message);
     }
-  }, 5 * 60 * 1000); // cada 5 min
+  }
+
+  // Fallback: browser login (siempre funciona, bypassa Cloudflare)
+  if (process.env.COCOS_EMAIL && process.env.COCOS_PASSWORD && process.env.COCOS_TOTP) {
+    try {
+      await _browserLogin();
+      _startTimer();
+      console.log('[Cocos] Servicio activo. Account ID:', _session.accountId);
+      return;
+    } catch (e) {
+      console.error('[Cocos] Browser login falló:', e.message);
+    }
+  }
+
+  // Último recurso: token existente si no expiró
+  if (loaded) {
+    const now = Math.floor(Date.now() / 1000);
+    if (_session.expiresAt > now + 60) {
+      _ready = true;
+      _startTimer();
+      console.warn('[Cocos] Usando token almacenado (expira en', Math.round((_session.expiresAt - now) / 60), 'min)');
+      console.log('[Cocos] Servicio activo. Account ID:', _session.accountId);
+      return;
+    }
+  }
+
+  console.warn('[Cocos] Sin sesión activa. Configurar credenciales en .env');
 }
 
 // ── Helpers de mercado
@@ -425,8 +355,8 @@ async function forceRefresh() {
     _startTimer();
     return token;
   } catch (e) {
-    console.log('[Cocos] forceRefresh falló, intentando full-login...');
-    const token = await _fullLogin();
+    console.log('[Cocos] forceRefresh falló, usando browser login...');
+    const token = await _browserLogin();
     _startTimer();
     return token;
   }
