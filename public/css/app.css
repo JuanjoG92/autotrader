@@ -269,28 +269,57 @@ img { max-width: 100%; }
   .features-grid { grid-template-columns: 1fr; }
   .form-row { grid-template-columns: 1fr; }
 
-  .sidebar { transform: translateX(-100%); transition: transform .3s; width: var(--sidebar-w); }
-  .sidebar.collapsed { transform: translateX(-100%); }
-  .sidebar.open { transform: translateX(0); width: var(--sidebar-w); }
+  /* Sidebar mobile */
+  .sidebar { transform: translateX(-100%); transition: transform .3s ease; width: 260px; position: fixed; z-index: 200; }
+  .sidebar.collapsed { transform: translateX(-100%); width: 260px; }
+  .sidebar.open { transform: translateX(0); width: 260px; }
+  .sidebar.open .sidebar-logo span,
+  .sidebar.open .sidebar-link span,
+  .sidebar.open .sidebar-external span,
+  .sidebar.open .user-info span { display: inline !important; }
+  .sidebar.open .sidebar-link { padding: 12px 20px !important; justify-content: flex-start !important; }
+  .sidebar.open .sidebar-external { padding: .6rem 1rem !important; justify-content: flex-start !important; border-left: 3px solid !important; }
   .sidebar-toggle { display: none; }
-  .topbar { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; background: var(--bg2); border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 150; }
-  .topbar-title { font-weight: 700; font-size: 18px; }
-  .main-content { margin-left: 0 !important; padding: 10px; }
-  .page-title { font-size: 18px !important; margin-bottom: 12px !important; }
-  .stats-grid { grid-template-columns: 1fr 1fr; gap: 8px !important; }
-  .stat-card { padding: 10px !important; gap: 8px !important; }
-  .stat-value { font-size: 16px !important; }
-  .stat-label { font-size: 10px !important; }
-  .stat-icon { width: 32px !important; height: 32px !important; font-size: 14px !important; border-radius: 8px !important; }
-  .card { padding: 12px !important; margin-bottom: 12px !important; border-radius: 10px !important; }
-  .card-header h3 { font-size: 14px !important; }
-  .prices-grid { grid-template-columns: 1fr 1fr !important; gap: 6px !important; }
-  .price-card { padding: 8px !important; }
-  .pc-symbol { font-size: 10px !important; }
-  .pc-price { font-size: 14px !important; }
-  .pc-change { font-size: 11px !important; }
-  .table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
-  .table { font-size: 11px !important; min-width: 500px; }
-  .table th, .table td { padding: 6px 8px !important; white-space: nowrap; }
+  .sidebar-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 190; }
+  .sidebar-overlay.open { display: block; }
+
+  /* Topbar */
+  .topbar { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; background: var(--bg2); border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 150; }
+  .topbar-title { font-weight: 700; font-size: 16px; }
+
+  /* Main content */
+  .main-content { margin-left: 0 !important; padding: 8px; }
+  .page-title { font-size: 16px !important; margin-bottom: 8px !important; }
+
+  /* Stats grid */
+  .stats-grid { grid-template-columns: 1fr 1fr; gap: 6px !important; }
+  .stat-card { padding: 8px !important; gap: 6px !important; flex-direction: column; align-items: flex-start !important; }
+  .stat-value { font-size: 15px !important; line-height: 1.2; }
+  .stat-label { font-size: 9px !important; }
+  .stat-sub { font-size: 9px !important; }
+  .stat-icon { width: 28px !important; height: 28px !important; font-size: 12px !important; border-radius: 6px !important; }
+
+  /* Cards */
+  .card { padding: 10px !important; margin-bottom: 8px !important; border-radius: 8px !important; }
+  .card-header { margin-bottom: 8px !important; }
+  .card-header h3 { font-size: 13px !important; }
+
+  /* Prices */
+  .prices-grid { grid-template-columns: 1fr 1fr !important; gap: 4px !important; }
+  .price-card { padding: 6px !important; }
+  .pc-symbol { font-size: 9px !important; }
+  .pc-price { font-size: 13px !important; }
+  .pc-change { font-size: 10px !important; }
+
+  /* Tables */
+  .table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; margin: 0 -10px; padding: 0 10px; }
+  .table { font-size: 11px !important; min-width: 480px; }
+  .table th, .table td { padding: 5px 6px !important; white-space: nowrap; }
+  .table th { font-size: 9px !important; }
+
+  /* Bots */
   .bots-grid { grid-template-columns: 1fr; }
+
+  /* Modals */
+  .modal-content { padding: 16px !important; max-width: 95vw; }
 }

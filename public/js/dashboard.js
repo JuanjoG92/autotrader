@@ -18,6 +18,8 @@
       document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
       document.getElementById('sec-' + sec).classList.add('active');
       document.getElementById('sidebar').classList.remove('open');
+      const overlay = document.getElementById('sidebarOverlay');
+      if (overlay) overlay.classList.remove('open');
       if (sec === 'overview') loadOverview();
       if (sec === 'market') loadMarket();
       if (sec === 'bots') loadBots();
@@ -143,7 +145,13 @@
       const freeEl = document.getElementById('binanceFree');
       if (bal && typeof bal === 'object' && !bal.error) {
         balEl.textContent = '$' + formatNum(bal._totalUSD || 0);
-        if (freeEl) freeEl.textContent = 'Libre: $' + formatNum(bal._freeUSDT || 0);
+        // Show breakdown
+        const parts = ['USDT: $' + formatNum(bal._freeUSDT || 0)];
+        for (const [coin, info] of Object.entries(bal)) {
+          if (coin.startsWith('_') || coin === 'USDT' || !info?.total || info.total <= 0) continue;
+          parts.push(coin + ': ' + formatNum(info.total, 4));
+        }
+        if (freeEl) freeEl.textContent = parts.join(' | ');
       } else {
         balEl.textContent = bal?.error ? '...' : '$---';
       }
