@@ -47,11 +47,15 @@ pubEx.httpsAgent = agent;
   const authAgent = new SocksProxyAgent(proxyUrl);
   const authEx = new ccxt.binance({
     apiKey, secret: apiSecret, enableRateLimit: true,
-    options: { defaultType: 'spot', adjustForTimeDifference: true, recvWindow: 10000 },
+    verbose: true,
+    options: { defaultType: 'spot', adjustForTimeDifference: true, recvWindow: 60000 },
     socksProxy: proxyUrl, httpAgent: authAgent, httpsAgent: authAgent,
   });
   authEx.httpAgent = authAgent;
   authEx.httpsAgent = authAgent;
+
+  // First sync time
+  try { await authEx.loadTimeDifference(); console.log('4a. Time diff:', authEx.options.timeDifference); } catch(e) { console.log('4a. Time diff fail:', e.message.substring(0,80)); }
 
   try {
     const bal = await authEx.fetchBalance();
@@ -60,16 +64,33 @@ pubEx.httpsAgent = agent;
     console.log('4. AUTH fetchBalance OK:', JSON.stringify(assets));
   } catch (e) {
     const msg = e.message || '';
-    console.log('4. AUTH fetchBalance FAIL:', msg.substring(0, 200));
-    if (msg.includes('-2008')) {
+    console.log('4. AUTH fetchBalance FAIL:', msg.substring(0, 300));
+    if (msg.includes('-2008') || msg.includes('-2015')) {
       console.log('');
-      console.log('CAUSA: Tu API key esta restringida a IP 172.96.8.245 (VPS)');
-      console.log('Pero el tunel SOCKS sale por tu PC argentina (181.126.38.149)');
-      console.log('Binance ve 181.126.38.149 y rechaza porque no esta en la whitelist');
-      console.log('');
-      console.log('FIX: En Binance > Gestion de API > autotrader:');
-      console.log('  Agregar IP: 181.126.38.149');
-      console.log('  O cambiar a "Sin restricciones"');
+      console.log('Probando con key hardcoded directa (sin DB)...');
     }
+  }
+
+  // Step 4: Try with explicit key to rule out encoding issues  
+  const ex2agent = new SocksProxyAgent(proxyUrl);
+  const ex2 = new ccxt.binance({
+    apiKey: 'XvcLbTYUk1AZwalknb7DVCwWIpUDeKQPit6cQjCEeksgce64neMn2rg8PODqyoSs',
+    secret: '6fRmyguWO8XnEcTA0ao63EpjqxiSZOAwIWwIP4KhBEaYSbZkKJNw2j7BKIOGABwC',
+    enableRateLimit: true,
+    verbose: false,
+    options: { defaultType: 'spot', adjustForTimeDifference: true, recvWindow: 60000 },
+    socksProxy: proxyUrl, httpAgent: ex2agent, httpsAgent: ex2agent,
+  });
+  ex2.httpAgent = ex2agent;
+  ex2.httpsAgent = ex2agent;
+
+  try {
+    await ex2.loadTimeDifference();
+    const bal = await ex2.fetchBalance();
+    const assets = {};
+    for (const [c, v] of Object.entries(bal.total)) { if (v > 0) assets[c] = v; }
+    console.log('5. HARDCODED fetchBalance OK:', JSON.stringify(assets));
+  } catch (e) {
+    console.log('5. HARDCODED fetchBalance FAIL:', e.message.substring(0, 300));
   }
 })();
