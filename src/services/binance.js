@@ -289,19 +289,22 @@ async function getFirstBinanceBalance() {
 }
 
 async function _directBalance(apiKeyRow) {
-  const crypto = require('crypto');
+  const nodeCrypto = require('crypto');
   const apiKey = decrypt(apiKeyRow.api_key_enc);
   const secret = decrypt(apiKeyRow.api_secret_enc);
-  const ts = Date.now();
-  const params = 'timestamp=' + ts + '&recvWindow=60000';
-  const sig = crypto.createHmac('sha256', secret).update(params).digest('hex');
+
+  // Get Binance server time first to avoid timestamp issues
+  const serverTime = await _getBinanceTime();
+  const params = 'timestamp=' + serverTime + '&recvWindow=60000';
+  const sig = nodeCrypto.createHmac('sha256', secret).update(params).digest('hex');
   const url = 'https://api.binance.com/api/v3/account?' + params + '&signature=' + sig;
+
+  console.log('[Binance] Direct balance: key=' + apiKey.substring(0, 8) + '... serverTime=' + serverTime);
 
   return new Promise((resolve, reject) => {
     const reqOpts = {
       headers: { 'X-MBX-APIKEY': apiKey },
     };
-    // Use SOCKS proxy if configured
     if (process.env.BINANCE_PROXY && process.env.BINANCE_PROXY.startsWith('socks')) {
       const proxyUrl = process.env.BINANCE_PROXY.replace('socks5h://', 'socks5://');
       reqOpts.agent = new SocksProxyAgent(proxyUrl);
@@ -312,6 +315,7 @@ async function _directBalance(apiKeyRow) {
       res.on('end', () => {
         try {
           const j = JSON.parse(data);
+          console.log('[Binance] Direct balance response code:', j.code || 'OK', j.msg || '');
           if (j.code) return reject(new Error('Binance: ' + j.msg + ' (' + j.code + ')'));
           const assets = {};
           for (const b of (j.balances || [])) {
@@ -324,6 +328,26 @@ async function _directBalance(apiKeyRow) {
         } catch (e) { reject(e); }
       });
     }).on('error', reject);
+  });
+}
+
+function _getBinanceTime() {
+  return new Promise((resolve, reject) => {
+    const reqOpts = {};
+    if (process.env.BINANCE_PROXY && process.env.BINANCE_PROXY.startsWith('socks')) {
+      const proxyUrl = process.env.BINANCE_PROXY.replace('socks5h://', 'socks5://');
+      reqOpts.agent = new SocksProxyAgent(proxyUrl);
+    }
+    https.get('https://api.binance.com/api/v3/time', reqOpts, (res) => {
+      let data = '';
+      res.on('data', (c) => { data += c; });
+      res.on('end', () => {
+        try {
+          const j = JSON.parse(data);
+          resolve(j.serverTime || Date.now());
+        } catch { resolve(Date.now()); }
+      });
+    }).on('error', () => resolve(Date.now()));
   });
 }
 
