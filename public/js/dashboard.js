@@ -47,8 +47,6 @@
       if (!s || s.error) return;
       const openPositions = s.openPositions || 0;
       document.getElementById('activeBots').textContent = openPositions;
-      const aiEl = document.getElementById('cryptoAiStatus');
-      aiEl.textContent = s.enabled ? '🟢 Activa (' + openPositions + ' pos)' : '⏸ Inactiva';
 
       // Positions table
       const positions = s.positions || [];
@@ -87,21 +85,26 @@
       document.getElementById('totalVolume').textContent = formatUSD(s.volume || 0);
     }).catch(() => {});
 
-    // Crypto history as recent trades (replaces empty trades table)
-    apiFetch('/crypto/history?limit=10').then(history => {
+    // Crypto history as recent trades — only REAL trades (not paper)
+    apiFetch('/crypto/history?limit=20').then(history => {
       if (!history || !Array.isArray(history) || !history.length) return;
       const tbody = document.getElementById('recentTrades');
-      tbody.innerHTML = history.map(t => {
-        const pnl = t.pnl || 0;
-        const pnlCls = pnl >= 0 ? 'tag-buy' : 'tag-sell';
+      // Filter: only show LIVE trades (order_id not starting with PAPER)
+      const real = history.filter(t => t.order_id && !t.order_id.startsWith('PAPER'));
+      if (!real.length) {
+        tbody.innerHTML = '<tr><td colspan="6" class="empty">Sin operaciones reales aún</td></tr>';
+        return;
+      }
+      tbody.innerHTML = real.map(t => {
         const dt = formatDate(t.created_at);
+        const status = t.status === 'CLOSED' ? '✅' : '🔄';
         return `<tr>
           <td>${dt}</td>
           <td><strong>${t.symbol}</strong></td>
           <td><span class="tag-buy">${t.side || 'BUY'}</span></td>
           <td>${formatNum(t.quantity, 6)}</td>
           <td>$${formatNum(t.entry_price)}</td>
-          <td>$${formatNum(t.entry_price * t.quantity)}</td>
+          <td>$${formatNum(t.entry_price * t.quantity)} ${status}</td>
         </tr>`;
       }).join('');
     }).catch(() => {});
