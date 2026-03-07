@@ -95,7 +95,6 @@ function _getApiKeyInfo(cfg) {
 }
 
 async function _executeTrade(cfg, symbol, side, quantityUSD) {
-  // Obtener precio: primero intenta Binance directo (via proxy), sino CoinGecko
   let price = 0;
   const keyInfo = _getApiKeyInfo(cfg);
 
@@ -114,22 +113,36 @@ async function _executeTrade(cfg, symbol, side, quantityUSD) {
   }
   if (price <= 0) throw new Error(`Sin precio para ${symbol}`);
 
-  const quantity = parseFloat((quantityUSD / price).toFixed(6));
+  // Binance minimum notional is $5 for most pairs, ensure we're above
+  const minNotional = 6; // $6 to be safe above Binance $5 minimum
+  const actualUSD = Math.max(quantityUSD, minNotional);
+  const quantity = parseFloat((actualUSD / price).toFixed(6));
   if (quantity <= 0) throw new Error(`Cantidad muy baja para ${symbol}`);
 
   let order = null;
   let mode = 'PAPER';
 
   if (keyInfo) {
-    try {
-      order = await createOrder(keyInfo.user_id, keyInfo.id, symbol, side.toLowerCase(), quantity);
-      mode = 'LIVE';
-    } catch (e) {
-      console.warn(`[Crypto] Binance orden falló (${e.message.substring(0, 80)}) — paper mode`);
+    // Retry up to 2 times on timeout/network errors
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        order = await createOrder(keyInfo.user_id, keyInfo.id, symbol, side.toLowerCase(), quantity);
+        mode = 'LIVE';
+        break;
+      } catch (e) {
+        const msg = e.message || '';
+        if (attempt < 2 && (msg.includes('timed out') || msg.includes('ETIMEDOUT') || msg.includes('ECONNRESET'))) {
+          console.warn(`[Crypto] Orden timeout intento ${attempt}, reintentando...`);
+          await new Promise(r => setTimeout(r, 2000));
+          continue;
+        }
+        console.warn(`[Crypto] Binance orden falló (${msg.substring(0, 80)}) — paper mode`);
+        break;
+      }
     }
   }
 
-  console.log(`[Crypto] ${mode} ${side} ${symbol}: ${quantity} @ $${price} (~$${quantityUSD})`);
+  console.log(`[Crypto] ${mode} ${side} ${symbol}: ${quantity} @ $${price} (~$${actualUSD})`);
   return { order: order || { id: 'PAPER-' + Date.now() }, price, quantity, mode };
 }
 
@@ -343,16 +356,60 @@ async function _executeSellPosition(cfg, pos, reason) {
     const pnl = (price - pos.entry_price) * pos.quantity;
 
     const keyInfo = _getApiKeyInfo(cfg);
+    let sold = false;
+
     if (keyInfo) {
-      await createOrder(keyInfo.user_id, keyInfo.id, pos.symbol, 'sell', pos.quantity);
+      // Try selling with retry
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        try {
+          await createOrder(keyInfo.user_id, keyInfo.id, pos.symbol, 'sell', pos.quantity);
+          sold = true;
+          break;
+        } catch (e) {
+          const msg = e.message || '';
+
+          // NOTIONAL: amount too small for Binance ($5 min) — close position, nothing to sell
+          if (msg.includes('NOTIONAL')) {
+            console.warn(`[Crypto] ${pos.symbol} monto muy bajo para vender ($${(pos.quantity * price).toFixed(2)}) — cerrando posición`);
+            break;
+          }
+
+          // Insufficient balance: position qty doesn't match Binance — try selling actual balance
+          if (msg.includes('insufficient') || msg.includes('balance')) {
+            try {
+              const bal = await getBalances(keyInfo.user_id, keyInfo.id);
+              const coin = pos.symbol.split('/')[0];
+              const realQty = bal[coin]?.free || 0;
+              if (realQty > 0 && (realQty * price) >= 5) {
+                console.log(`[Crypto] Vendiendo balance real: ${realQty} ${coin} (posición decía ${pos.quantity})`);
+                await createOrder(keyInfo.user_id, keyInfo.id, pos.symbol, 'sell', parseFloat(realQty.toFixed(6)));
+                sold = true;
+              } else {
+                console.warn(`[Crypto] ${coin} real: ${realQty} (muy poco) — cerrando posición`);
+              }
+            } catch {}
+            break;
+          }
+
+          // Timeout: retry
+          if (attempt < 2 && (msg.includes('timed out') || msg.includes('ETIMEDOUT'))) {
+            console.warn(`[Crypto] Sell timeout intento ${attempt}, reintentando...`);
+            await new Promise(r => setTimeout(r, 2000));
+            continue;
+          }
+
+          console.error(`[Crypto] Sell error: ${msg.substring(0, 80)}`);
+          break;
+        }
+      }
     }
 
-    closePosition(pos.id, pnl, reason);
-    console.log(`[Crypto] 💰 SELL ${pos.symbol} x${pos.quantity} @ $${price} | PnL: $${pnl.toFixed(2)} | ${reason}`);
+    closePosition(pos.id, sold ? pnl : 0, sold ? reason : `Cerrada (${reason})`);
+    console.log(`[Crypto] ${sold ? '💰' : '📝'} SELL ${pos.symbol} x${pos.quantity} @ $${price} | PnL: $${(sold ? pnl : 0).toFixed(2)} | ${reason}`);
 
     if (_broadcastFn) _broadcastFn({
       type: 'crypto_sell', symbol: pos.symbol, quantity: pos.quantity,
-      entry: pos.entry_price, exit: price, pnl, reason,
+      entry: pos.entry_price, exit: price, pnl: sold ? pnl : 0, reason,
       timestamp: new Date().toISOString(),
     });
   } catch (e) {

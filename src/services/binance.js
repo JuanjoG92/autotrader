@@ -72,6 +72,7 @@ function createExchange(apiKeyRow) {
     apiKey,
     secret,
     enableRateLimit: true,
+    timeout: 30000,
     options: { defaultType: 'spot' },
   };
 
@@ -135,7 +136,7 @@ let _sharedExchangeTs = 0;
 function _getSharedExchange() {
   const now = Date.now();
   if (_sharedExchange && (now - _sharedExchangeTs) < 300000) return _sharedExchange;
-  const config = { enableRateLimit: true, options: { defaultType: 'spot' } };
+  const config = { enableRateLimit: true, timeout: 30000, options: { defaultType: 'spot' } };
   if (process.env.BINANCE_PROXY) {
     const proxy = process.env.BINANCE_PROXY;
     const proxyUrl = proxy.replace('socks5h://', 'socks5://');
