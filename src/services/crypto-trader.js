@@ -94,15 +94,28 @@ function _getApiKeyInfo(cfg) {
 }
 
 async function _executeTrade(cfg, symbol, side, quantityUSD) {
-  const ticker = await getTicker(symbol);
-  const price = ticker?.last || 0;
+  // Obtener precio: primero intenta Binance directo (via proxy), sino CoinGecko
+  let price = 0;
+  const keyInfo = _getApiKeyInfo(cfg);
+
+  if (keyInfo) {
+    try {
+      const exchange = getExchangeForUser(keyInfo.user_id, keyInfo.id);
+      const ticker = await exchange.fetchTicker(symbol);
+      price = ticker?.last || ticker?.close || 0;
+    } catch {}
+  }
+  if (price <= 0) {
+    try {
+      const t = await getTicker(symbol);
+      price = t?.last || 0;
+    } catch {}
+  }
   if (price <= 0) throw new Error(`Sin precio para ${symbol}`);
 
   const quantity = parseFloat((quantityUSD / price).toFixed(6));
   if (quantity <= 0) throw new Error(`Cantidad muy baja para ${symbol}`);
 
-  // Intentar ejecutar en Binance si hay API key y funciona
-  const keyInfo = _getApiKeyInfo(cfg);
   let order = null;
   let mode = 'PAPER';
 
@@ -111,7 +124,7 @@ async function _executeTrade(cfg, symbol, side, quantityUSD) {
       order = await createOrder(keyInfo.user_id, keyInfo.id, symbol, side.toLowerCase(), quantity);
       mode = 'LIVE';
     } catch (e) {
-      console.warn(`[Crypto] Binance no disponible (${e.message.substring(0, 60)}) — ejecutando en modo paper`);
+      console.warn(`[Crypto] Binance orden falló (${e.message.substring(0, 80)}) — paper mode`);
     }
   }
 
