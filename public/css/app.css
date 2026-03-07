@@ -269,9 +269,22 @@ img { max-width: 100%; }
   .features-grid { grid-template-columns: 1fr; }
   .form-row { grid-template-columns: 1fr; }
 
-  /* Hide desktop sidebar completely */
-  .sidebar { display: none !important; position: fixed; top: 0; left: 0; bottom: 0; width: 260px; z-index: 300; transform: none; }
-  .sidebar.open { display: flex !important; }
+  /* SIDEBAR: fully hidden, override the 1280px collapsed state */
+  .sidebar,
+  .sidebar.collapsed,
+  .sidebar:not(:hover) {
+    display: none !important;
+    width: 0 !important;
+    min-width: 0 !important;
+    transform: none !important;
+    position: fixed !important;
+    top: 0; left: 0; bottom: 0;
+    z-index: 300;
+  }
+  .sidebar.open {
+    display: flex !important;
+    width: 260px !important;
+  }
   .sidebar.open .sidebar-logo span,
   .sidebar.open .sidebar-link span,
   .sidebar.open .sidebar-external span,
@@ -282,41 +295,41 @@ img { max-width: 100%; }
   .sidebar-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.6); z-index: 250; }
   .sidebar-overlay.open { display: block; }
 
-  /* Topbar: thin bar at top with hamburger only */
-  .topbar { display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; background: var(--bg2); border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 150; height: 44px; }
-  .topbar-title { font-weight: 600; font-size: 14px; }
+  /* TOPBAR: just hamburger + logout, NO title text */
+  .topbar { display: flex !important; align-items: center; justify-content: space-between; padding: 6px 10px; background: var(--bg2); border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 150; height: 36px; }
+  .topbar-title { display: none !important; }
 
-  /* Main content: full width, no margin */
-  .main-content { margin-left: 0 !important; padding: 8px; padding-top: 0; }
-  .page-title { font-size: 15px !important; margin-bottom: 6px !important; margin-top: 4px !important; }
+  /* MAIN: full width, zero margin */
+  .main-content { margin-left: 0 !important; padding: 6px !important; padding-top: 0 !important; }
+  .page-title { font-size: 14px !important; margin: 4px 0 !important; }
 
-  /* Stats: 2 columns, very compact */
-  .stats-grid { grid-template-columns: 1fr 1fr; gap: 5px !important; }
-  .stat-card { padding: 8px !important; gap: 4px !important; flex-direction: row; align-items: center !important; min-height: 0 !important; }
-  .stat-value { font-size: 14px !important; line-height: 1.1; }
-  .stat-label { font-size: 8px !important; text-transform: uppercase; letter-spacing: .3px; }
-  .stat-sub { font-size: 8px !important; line-height: 1.2; }
-  .stat-icon { width: 26px !important; height: 26px !important; min-width: 26px; font-size: 11px !important; border-radius: 6px !important; }
+  /* STATS */
+  .stats-grid { grid-template-columns: 1fr 1fr; gap: 4px !important; }
+  .stat-card { padding: 6px !important; gap: 4px !important; min-height: 0 !important; }
+  .stat-value { font-size: 13px !important; line-height: 1.1; }
+  .stat-label { font-size: 8px !important; }
+  .stat-sub { font-size: 7px !important; }
+  .stat-icon { width: 24px !important; height: 24px !important; min-width: 24px; font-size: 10px !important; border-radius: 5px !important; }
 
-  /* Cards */
-  .card { padding: 8px !important; margin-bottom: 6px !important; border-radius: 8px !important; }
-  .card-header { margin-bottom: 6px !important; }
-  .card-header h3 { font-size: 12px !important; }
+  /* CARDS */
+  .card { padding: 6px !important; margin-bottom: 5px !important; border-radius: 6px !important; }
+  .card-header { margin-bottom: 4px !important; }
+  .card-header h3 { font-size: 11px !important; }
 
-  /* Prices: 2 cols */
-  .prices-grid { grid-template-columns: 1fr 1fr !important; gap: 4px !important; }
-  .price-card { padding: 5px !important; }
+  /* PRICES */
+  .prices-grid { grid-template-columns: 1fr 1fr !important; gap: 3px !important; }
+  .price-card { padding: 4px !important; }
   .pc-symbol { font-size: 8px !important; }
-  .pc-price { font-size: 12px !important; }
+  .pc-price { font-size: 11px !important; }
   .pc-change { font-size: 9px !important; }
 
-  /* Tables: horizontal scroll */
+  /* TABLES */
   .table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
-  .table { font-size: 10px !important; min-width: 440px; }
-  .table th, .table td { padding: 4px 5px !important; white-space: nowrap; }
-  .table th { font-size: 8px !important; text-transform: uppercase; }
+  .table { font-size: 10px !important; min-width: 420px; }
+  .table th, .table td { padding: 3px 4px !important; white-space: nowrap; }
+  .table th { font-size: 8px !important; }
 
   .bots-grid { grid-template-columns: 1fr; }
-  .modal-content { padding: 14px !important; max-width: 95vw; }
-  .info-box { flex-direction: column; gap: 8px; font-size: 12px; }
+  .modal-content { padding: 12px !important; max-width: 96vw; }
+  .info-box { flex-direction: column; gap: 6px; font-size: 11px; }
 }

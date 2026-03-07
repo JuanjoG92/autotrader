@@ -139,19 +139,13 @@
       }).join('');
     }).catch(() => {});
 
-    // Balance: use server-calculated total
+    // Balance: server-calculated total
     apiFetch('/crypto/balance').then(bal => {
       const balEl = document.getElementById('binanceBalance');
       const freeEl = document.getElementById('binanceFree');
       if (bal && typeof bal === 'object' && !bal.error) {
         balEl.textContent = '$' + formatNum(bal._totalUSD || 0);
-        // Show breakdown
-        const parts = ['USDT: $' + formatNum(bal._freeUSDT || 0)];
-        for (const [coin, info] of Object.entries(bal)) {
-          if (coin.startsWith('_') || coin === 'USDT' || !info?.total || info.total <= 0) continue;
-          parts.push(coin + ': ' + formatNum(info.total, 4));
-        }
-        if (freeEl) freeEl.textContent = parts.join(' | ');
+        if (freeEl) freeEl.textContent = 'Libre: $' + formatNum(bal._freeUSDT || 0);
       } else {
         balEl.textContent = bal?.error ? '...' : '$---';
       }
