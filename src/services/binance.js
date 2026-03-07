@@ -260,12 +260,32 @@ async function getTopPairs() {
   }));
 }
 
+// ── Balance cache (avoid slow proxy calls on every dashboard load) ──
+let _balanceCache = null;
+let _balanceCacheTs = 0;
+const BALANCE_CACHE_TTL = 30000; // 30 seconds
+
 async function getFirstBinanceBalance() {
+  // Return cache if fresh
+  if (_balanceCache && (Date.now() - _balanceCacheTs) < BALANCE_CACHE_TTL) {
+    return _balanceCache;
+  }
+
   const db = getDB();
   const row = db.prepare("SELECT * FROM api_keys WHERE exchange = 'binance' LIMIT 1").get();
   if (!row) return null;
 
-  // Method 1: ccxt fetchBalance (spot only, no SAPI)
+  // Method 1: Direct signed HTTP (most reliable)
+  try {
+    const result = await _directBalance(row);
+    _balanceCache = result;
+    _balanceCacheTs = Date.now();
+    return result;
+  } catch (e1) {
+    console.log('[Binance] direct balance failed:', (e1.message || '').substring(0, 120));
+  }
+
+  // Method 2: ccxt fetchBalance
   try {
     const exchange = createExchange(row);
     exchange.options.fetchCurrencies = false;
@@ -274,18 +294,16 @@ async function getFirstBinanceBalance() {
     for (const [coin, info] of Object.entries(balance.total)) {
       if (info > 0) assets[coin] = { total: info, free: balance.free[coin] || 0, used: balance.used[coin] || 0 };
     }
+    _balanceCache = assets;
+    _balanceCacheTs = Date.now();
     return assets;
-  } catch (e1) {
-    console.log('[Binance] ccxt fetchBalance failed:', (e1.message || '').substring(0, 120));
+  } catch (e2) {
+    console.log('[Binance] ccxt fetchBalance failed:', (e2.message || '').substring(0, 120));
   }
 
-  // Method 2: Direct signed HTTP to /api/v3/account
-  try {
-    return await _directBalance(row);
-  } catch (e2) {
-    console.log('[Binance] direct balance failed:', (e2.message || '').substring(0, 120));
-    throw new Error('No se pudo obtener balance de Binance: ' + (e2.message || '').substring(0, 100));
-  }
+  // Return stale cache if available
+  if (_balanceCache) return _balanceCache;
+  throw new Error('No se pudo obtener balance de Binance');
 }
 
 async function _directBalance(apiKeyRow) {
