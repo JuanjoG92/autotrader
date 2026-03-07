@@ -16,6 +16,7 @@ const SETTLEMENT_MAP = { 'CI': '0001', '24hs': '0002', '48hs': '0003' };
 const CURRENCY_MAP   = { 'ARS': 'ARS', 'USD': 'USD', 'EXT': 'EXT' };
 
 let _session = { accessToken: null, refreshToken: null, expiresAt: 0, accountId: 0 };
+let _cfCookies = ''; // cookies de Cloudflare extraídas del browser
 let _timer = null;
 let _ready = false;
 let _loginInProgress = false;
@@ -60,14 +61,18 @@ async function _call(method, path, body, tokenOverride) {
   const token = tokenOverride || _session.accessToken;
   if (!token) throw new Error('Sin sesión Cocos activa');
 
+  const hdrs = {
+    'Content-Type':  'application/json',
+    'apikey':        ANON_KEY,
+    'Authorization': `Bearer ${token}`,
+    'x-account-id':  String(_session.accountId),
+    'User-Agent':    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+    'Accept':        'application/json',
+  };
+  if (_cfCookies) hdrs['Cookie'] = _cfCookies;
+
   const res = await fetch(`${BASE_URL}/${path}`, {
-    method,
-    headers: {
-      'Content-Type':  'application/json',
-      'apikey':        ANON_KEY,
-      'Authorization': `Bearer ${token}`,
-      'x-account-id':  String(_session.accountId),
-    },
+    method, headers: hdrs,
     body: body ? JSON.stringify(body) : undefined,
   });
 
@@ -180,6 +185,8 @@ async function _browserLogin() {
     const accountId = parseInt(process.env.COCOS_ACCOUNT_ID || '1391716');
 
     if (!totpFactor) {
+      const cookies = await page.cookies();
+      _cfCookies = cookies.map(c => c.name + '=' + c.value).join('; ');
       _saveSession(loginData.access_token, loginData.refresh_token, loginData.expires_at, accountId);
       _ready = true;
       console.log('[Cocos] ✅ Login exitoso (sin MFA) —', new Date().toLocaleString('es-AR'));
@@ -213,6 +220,11 @@ async function _browserLogin() {
     if (verifyData.error || !verifyData.access_token) {
       throw new Error('MFA falló: ' + JSON.stringify(verifyData).substring(0, 300));
     }
+
+    // Extraer cookies CF para usarlas en fetch regular
+    const cookies = await page.cookies();
+    _cfCookies = cookies.map(c => c.name + '=' + c.value).join('; ');
+    console.log('[Cocos] Cookies CF capturadas (' + cookies.length + ')');
 
     _saveSession(verifyData.access_token, verifyData.refresh_token, verifyData.expires_at, accountId);
     _ready = true;
