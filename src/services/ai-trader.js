@@ -157,8 +157,8 @@ async function runAnalysis() {
 
   const tickers   = getActiveTickers(cfg);
   const marketCtx = buildMarketContext(tickers);
-  const newsItems = cfg.news_driven !== 0 ? news.getNewsForTickers(tickers, 15) : [];
-  const newsCtx   = newsItems.length ? newsItems.map(n => `[${n.source}] ${n.title}`).join('\n') : 'Sin noticias recientes.';
+  const newsItems = cfg.news_driven !== 0 ? news.getNewsForTickers(tickers, 10) : [];
+  const newsCtx   = newsItems.length ? newsItems.map(n => `- ${n.title.substring(0, 80)}`).join('\n') : 'Sin noticias recientes.';
   const ragCtx    = cfg.use_rag !== 0 ? await rag.buildRAGContext('mercado argentino acciones cedear inversion ' + tickers.join(' '), false) : '';
 
   let portfolio = 'Sin posiciones', buyingPower = 'Sin datos', marketOpen = false;

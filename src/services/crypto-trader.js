@@ -21,6 +21,7 @@ let _broadcastFn = null;
 let _lastAnalysis = null; // Last AI analysis for dashboard
 let _lastMarketPrices = {}; // Cache: últimos precios para detectar cambios
 let _cacheSkips = 0;        // Counter de análisis salteados por cache
+let _lastNewsHash = '';     // Cache: hash de noticias para no repetir
 
 // ── Config DB ─────────────────────────────────────────────────────────────────
 
@@ -233,10 +234,18 @@ async function runAnalysis() {
 
   // ── Paso 3: Armar contexto (ya tenemos todo, sin esperar) ──
   const cryptoTickers = ['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'CRYPTO'];
-  const newsItems = news.getNewsForTickers(cryptoTickers, 8);
-  const newsCtx = newsItems.length
-    ? newsItems.map(n => `[${n.source}] ${n.title}`).join('\n')
-    : 'Sin noticias crypto recientes.';
+  const newsItems = news.getNewsForTickers(cryptoTickers, 6);
+  // Solo enviar noticias si cambiaron (las noticias se actualizan cada 30 min)
+  const newsHash = newsItems.map(n => n.title).join('|').substring(0, 200);
+  let newsCtx;
+  if (newsHash === _lastNewsHash && _lastAnalysis) {
+    newsCtx = 'Sin cambios en noticias desde último análisis.';
+  } else {
+    newsCtx = newsItems.length
+      ? newsItems.map(n => `- ${n.title.substring(0, 80)}`).join('\n')
+      : 'Sin noticias crypto recientes.';
+    _lastNewsHash = newsHash;
+  }
 
   const positions = getOpenPositions();
   const posCtx = positions.length
