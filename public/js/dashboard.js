@@ -18,6 +18,7 @@
       document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
       document.getElementById('sec-' + sec).classList.add('active');
       document.getElementById('sidebar').classList.remove('open');
+      if (sec === 'overview') loadOverview();
       if (sec === 'market') loadMarket();
       if (sec === 'bots') loadBots();
       if (sec === 'trades') loadAllTrades();
@@ -25,30 +26,38 @@
     });
   });
 
+  // Sidebar toggle
+  const toggleBtn = document.getElementById('sidebarToggle');
+  if (toggleBtn) {
+    toggleBtn.addEventListener('click', () => {
+      document.getElementById('sidebar').classList.toggle('collapsed');
+    });
+  }
+
   // ── Init ──
   connectPriceStream();
-  loadOverview();
+  setTimeout(loadOverview, 300); // Pequeño delay para asegurar que el WS conecte primero
   loadKeys();
 
   // ── Overview ──
   async function loadOverview() {
     try {
-      const [bots, summary] = await Promise.all([
-        apiFetch('/trading/bots'),
-        apiFetch('/trading/trades/summary'),
-      ]);
-      document.getElementById('activeBots').textContent = bots.filter(b => b.status === 'active').length;
+      const bots = await apiFetch('/trading/bots').catch(() => []);
+      const summary = await apiFetch('/trading/trades/summary').catch(() => ({}));
+      document.getElementById('activeBots').textContent = Array.isArray(bots) ? bots.filter(b => b.status === 'active').length : 0;
       document.getElementById('totalTrades').textContent = summary.total || 0;
-      document.getElementById('totalVolume').textContent = formatUSD(summary.volume);
+      document.getElementById('totalVolume').textContent = formatUSD(summary.volume || 0);
       const pnl = summary.total_pnl || 0;
       document.getElementById('totalPnl').textContent = (pnl >= 0 ? '+' : '') + formatUSD(pnl);
       const pnlIcon = document.getElementById('pnlIcon');
       pnlIcon.className = 'stat-icon ' + (pnl >= 0 ? 'green' : 'red');
 
-      const trades = await apiFetch('/trading/trades?limit=10');
-      renderTrades('recentTrades', trades, false);
+      const trades = await apiFetch('/trading/trades?limit=10').catch(() => []);
+      renderTrades('recentTrades', Array.isArray(trades) ? trades : [], false);
     } catch (err) {
       console.error('Overview error:', err);
+      // Reintentar en 3s si falló
+      setTimeout(loadOverview, 3000);
     }
   }
 
