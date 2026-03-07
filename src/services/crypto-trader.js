@@ -356,16 +356,28 @@ async function _executeSellPosition(cfg, pos, reason) {
     const pnl = (price - pos.entry_price) * pos.quantity;
 
     const keyInfo = _getApiKeyInfo(cfg);
+    let sold = false;
     if (keyInfo) {
-      await createOrder(keyInfo.user_id, keyInfo.id, pos.symbol, 'sell', pos.quantity);
+      try {
+        await createOrder(keyInfo.user_id, keyInfo.id, pos.symbol, 'sell', pos.quantity);
+        sold = true;
+      } catch (sellErr) {
+        // If insufficient balance, close position anyway (quantity mismatch)
+        const msg = sellErr.message || '';
+        if (msg.includes('insufficient') || msg.includes('balance')) {
+          console.warn(`[Crypto] Sell failed (${msg.substring(0, 60)}) — closing position as error`);
+        } else {
+          throw sellErr;
+        }
+      }
     }
 
-    closePosition(pos.id, pnl, reason);
-    console.log(`[Crypto] 💰 SELL ${pos.symbol} x${pos.quantity} @ $${price} | PnL: $${pnl.toFixed(2)} | ${reason}`);
+    closePosition(pos.id, sold ? pnl : 0, sold ? reason : `Error venta: ${reason}`);
+    console.log(`[Crypto] ${sold ? '💰' : '⚠️'} SELL ${pos.symbol} x${pos.quantity} @ $${price} | PnL: $${(sold ? pnl : 0).toFixed(2)} | ${reason}`);
 
     if (_broadcastFn) _broadcastFn({
       type: 'crypto_sell', symbol: pos.symbol, quantity: pos.quantity,
-      entry: pos.entry_price, exit: price, pnl, reason,
+      entry: pos.entry_price, exit: price, pnl: sold ? pnl : 0, reason,
       timestamp: new Date().toISOString(),
     });
   } catch (e) {
