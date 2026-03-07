@@ -1,12 +1,11 @@
 // Test ccxt + SOCKS proxy + API Key (fetchBalance)
-const ccxt = require('ccxt');
-const { SocksProxyAgent } = require('socks-proxy-agent');
-const { getDB } = require('./src/models/db');
-const { decrypt } = require('./src/services/encryption');
-
 require('dotenv').config();
 
-const { initDB } = require('./src/models/db');
+const ccxt = require('ccxt');
+const { SocksProxyAgent } = require('socks-proxy-agent');
+const { initDB, getDB } = require('./src/models/db');
+const { decrypt } = require('./src/services/encryption');
+
 initDB();
 
 const proxyUrl = (process.env.BINANCE_PROXY || '').replace('socks5h://', 'socks5://');
