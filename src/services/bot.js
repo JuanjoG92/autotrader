@@ -167,29 +167,23 @@ function startAllActiveBots(broadcast) {
   console.log('Resumed ' + bots.length + ' active bots');
 }
 
-// -- Price stream via CoinGecko (with cache, 30s interval) --
+// -- Price stream via Binance (30s interval) --
 
-const COIN_MAP = {
-  'BTC/USDT': 'bitcoin',
-  'ETH/USDT': 'ethereum',
-  'BNB/USDT': 'binancecoin',
-  'SOL/USDT': 'solana',
-  'XRP/USDT': 'ripple',
-};
+const PRICE_PAIRS = ['BTC/USDT', 'ETH/USDT', 'BNB/USDT', 'SOL/USDT', 'XRP/USDT'];
 
 function priceStream(broadcast) {
-  const ids = Object.values(COIN_MAP).join(',');
-  const url = 'https://api.coingecko.com/api/v3/simple/price?ids=' + ids + '&vs_currencies=usd&include_24hr_change=true';
+  const { getTicker } = require('./binance');
 
   async function fetchPrices() {
     try {
-      const json = await fetchJSON(url);
-      const data = Object.entries(COIN_MAP).map(([symbol, id]) => ({
-        symbol,
-        price: json[id] ? json[id].usd : 0,
-        change: json[id] ? json[id].usd_24h_change : 0,
-      }));
-      broadcast({ type: 'prices', data });
+      const data = [];
+      for (const symbol of PRICE_PAIRS) {
+        try {
+          const t = await getTicker(symbol);
+          if (t && t.last > 0) data.push({ symbol, price: t.last, change: t.percentage || 0 });
+        } catch {}
+      }
+      if (data.length > 0) broadcast({ type: 'prices', data });
     } catch (err) {
       console.error('Price stream error:', err.message);
     }

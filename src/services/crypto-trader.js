@@ -76,7 +76,7 @@ async function getMarketData() {
         rows.push(`${pair}: $${t.last.toFixed(2)} | 24h: ${t.percentage >= 0 ? '+' : ''}${t.percentage.toFixed(1)}% | Vol: $${Math.round(t.quoteVolume / 1e6)}M`);
       }
     } catch {}
-    await new Promise(r => setTimeout(r, 300)); // rate limit CoinGecko
+    await new Promise(r => setTimeout(r, 200));
   }
   return rows.join('\n') || 'Sin datos de mercado.';
 }
@@ -256,12 +256,29 @@ RESPONDE SOLO JSON:
     // Ejecutar señales
     for (const sig of (result.signals || [])) {
       if (!sig.symbol || (sig.confidence || 0) < cfg.min_confidence) continue;
-      if (sig.action === 'HOLD') continue; // HOLD = just watching
+      if (sig.action === 'HOLD') continue;
+
+      // Re-read positions fresh (may have changed during loop)
+      const currentPositions = getOpenPositions();
 
       // No comprar si ya tenemos posición abierta
-      if (sig.action === 'BUY' && positions.some(p => p.symbol === sig.symbol)) {
+      if (sig.action === 'BUY' && currentPositions.some(p => p.symbol === sig.symbol)) {
         console.log(`[Crypto] Skip ${sig.symbol} — ya tenemos posición abierta`);
         continue;
+      }
+
+      // Cooldown: no comprar si vendimos/cerramos este par hace menos de 30 min
+      if (sig.action === 'BUY') {
+        const recent = getDB().prepare(
+          "SELECT created_at FROM crypto_positions WHERE symbol = ? AND status = 'CLOSED' ORDER BY id DESC LIMIT 1"
+        ).get(sig.symbol);
+        if (recent) {
+          const closedAgo = Date.now() - new Date(recent.created_at + 'Z').getTime();
+          if (closedAgo < 30 * 60 * 1000) {
+            console.log(`[Crypto] Skip ${sig.symbol} — operado hace ${Math.round(closedAgo / 60000)} min (cooldown 30min)`);
+            continue;
+          }
+        }
       }
 
       // Smart amount: use AI suggested amount or 20% of available capital
@@ -314,6 +331,10 @@ async function monitorPositions() {
 
   for (const pos of positions) {
     try {
+      // Skip positions younger than 10 minutes (let them stabilize)
+      const posAge = Date.now() - new Date(pos.created_at + 'Z').getTime();
+      if (posAge < 10 * 60 * 1000) continue;
+
       const ticker = await getTicker(pos.symbol);
       const price = ticker?.last || 0;
       if (price <= 0) continue;

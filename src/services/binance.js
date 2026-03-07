@@ -40,23 +40,6 @@ async function cachedFetch(key, url, ttl) {
   return data;
 }
 
-// ── CoinGecko ID mapping ──
-
-const COINGECKO_IDS = {
-  'BTC': 'bitcoin', 'ETH': 'ethereum', 'BNB': 'binancecoin',
-  'SOL': 'solana', 'XRP': 'ripple', 'ADA': 'cardano',
-  'DOGE': 'dogecoin', 'MATIC': 'matic-network', 'DOT': 'polkadot',
-  'AVAX': 'avalanche-2', 'LINK': 'chainlink', 'UNI': 'uniswap',
-  'SHIB': 'shiba-inu', 'LTC': 'litecoin', 'TRX': 'tron',
-  'ATOM': 'cosmos', 'FIL': 'filecoin', 'APT': 'aptos',
-  'NEAR': 'near-protocol', 'ARB': 'arbitrum',
-};
-
-function getGeckoId(symbol) {
-  const base = symbol.split('/')[0];
-  return COINGECKO_IDS[base] || base.toLowerCase();
-}
-
 // ── Exchange (ccxt) ──
 
 const SUPPORTED_EXCHANGES = ['bybit', 'binance', 'kucoin', 'okx', 'bitget'];
@@ -158,39 +141,20 @@ function _getSharedExchange() {
   return _sharedExchange;
 }
 
-// ── Market data: Binance via proxy first, CoinGecko fallback ──
+// ── Market data: Binance only ──
 
 async function getTicker(pair) {
-  // Try Binance exchange via proxy
-  try {
-    const exchange = _getSharedExchange();
-    const ticker = await exchange.fetchTicker(pair);
-    if (ticker && ticker.last > 0) {
-      return { symbol: pair, last: ticker.last, percentage: ticker.percentage || 0, quoteVolume: ticker.quoteVolume || 0 };
-    }
-  } catch {}
-  // Fallback: CoinGecko
-  const id = getGeckoId(pair);
-  const url = 'https://api.coingecko.com/api/v3/simple/price?ids=' + id + '&vs_currencies=usd&include_24hr_change=true&include_24hr_vol=true';
-  const json = await cachedFetch('ticker_' + id, url, 30000);
-  const d = json[id] || {};
-  return { symbol: pair, last: d.usd || 0, percentage: d.usd_24h_change || 0, quoteVolume: d.usd_24h_vol || 0 };
+  const exchange = _getSharedExchange();
+  const ticker = await exchange.fetchTicker(pair);
+  if (ticker && ticker.last > 0) {
+    return { symbol: pair, last: ticker.last, percentage: ticker.percentage || 0, quoteVolume: ticker.quoteVolume || 0 };
+  }
+  throw new Error('Sin precio de Binance para ' + pair);
 }
 
 async function getOHLCV(pair, timeframe, limit) {
-  // Try Binance exchange via proxy
-  try {
-    const exchange = _getSharedExchange();
-    return await exchange.fetchOHLCV(pair, timeframe, undefined, limit || 100);
-  } catch {}
-  // Fallback: CoinGecko
-  const id = getGeckoId(pair);
-  const days = timeframe === '1d' ? limit : timeframe === '4h' ? Math.ceil(limit / 6) : timeframe === '1h' ? Math.ceil(limit / 24) : Math.ceil(limit / 288);
-  const clampedDays = Math.min(days, 90);
-  const url = 'https://api.coingecko.com/api/v3/coins/' + id + '/market_chart?vs_currency=usd&days=' + clampedDays;
-  const json = await cachedFetch('ohlcv_' + id + '_' + clampedDays, url, 120000);
-  if (!json.prices) return [];
-  return json.prices.map(p => [p[0], p[1], p[1], p[1], p[1], 0]);
+  const exchange = _getSharedExchange();
+  return await exchange.fetchOHLCV(pair, timeframe, undefined, limit || 100);
 }
 
 async function createOrder(userId, apiKeyId, pair, side, amount) {
@@ -249,16 +213,10 @@ async function getTopPairs() {
       symbol: t.symbol, price: t.last || 0, change24h: t.percentage || 0,
       volume: t.quoteVolume || 0, high: t.high || 0, low: t.low || 0,
     }));
-  } catch {}
-  // Fallback: CoinGecko
-  const url = 'https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=20&page=1&sparkline=false&price_change_percentage=24h';
-  const json = await cachedFetch('top_pairs', url, 60000);
-  if (!Array.isArray(json)) return [];
-  return json.map(c => ({
-    symbol: (c.symbol || '').toUpperCase() + '/USDT',
-    price: c.current_price || 0, change24h: c.price_change_percentage_24h || 0,
-    volume: c.total_volume || 0, high: c.high_24h || 0, low: c.low_24h || 0,
-  }));
+  } catch (e) {
+    console.error('[Binance] getTopPairs error:', (e.message || '').substring(0, 80));
+    return [];
+  }
 }
 
 // ── Balance cache (avoid slow proxy calls on every dashboard load) ──
