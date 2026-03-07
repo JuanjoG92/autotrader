@@ -65,7 +65,10 @@ async function _call(method, path, body, tokenOverride) {
       'apikey':        ANON_KEY,
       'Authorization': `Bearer ${token}`,
       'x-account-id':  String(_session.accountId),
-      'User-Agent':    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      'User-Agent':    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+      'Accept':        'application/json',
+      'Origin':        'https://app.cocos.capital',
+      'Referer':       'https://app.cocos.capital/',
     },
     body: body ? JSON.stringify(body) : undefined,
   });
@@ -112,6 +115,25 @@ function _generateTOTP(secret) {
 
 // ── Full Login (fallback) ─────────────────────────────────────────────────────
 
+// Helper: fetch seguro que detecta Cloudflare challenges y reintenta
+async function _safeFetch(url, opts, retries = 2) {
+  for (let i = 0; i <= retries; i++) {
+    const res = await fetch(url, opts);
+    const ct = res.headers.get('content-type') || '';
+    // Cloudflare devuelve HTML en vez de JSON
+    if (ct.includes('text/html') || (!ct.includes('json') && res.status === 403)) {
+      if (i < retries) {
+        const wait = (i + 1) * 3000;
+        console.warn(`[Cocos] Cloudflare challenge detectado, reintentando en ${wait/1000}s...`);
+        await new Promise(r => setTimeout(r, wait));
+        continue;
+      }
+      throw new Error('Cloudflare bloqueó la request — reintentá en unos minutos');
+    }
+    return res;
+  }
+}
+
 async function _fullLogin() {
   const email    = process.env.COCOS_EMAIL;
   const password = process.env.COCOS_PASSWORD;
@@ -133,11 +155,14 @@ async function _fullLogin() {
       'Content-Type':  'application/json',
       'apikey':        ANON_KEY,
       'Authorization': `Bearer ${ANON_KEY}`,
-      'User-Agent':    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      'User-Agent':    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+      'Accept':        'application/json',
+      'Origin':        'https://app.cocos.capital',
+      'Referer':       'https://app.cocos.capital/',
     };
 
     // Paso 1: Login con email + password
-    const loginRes = await fetch(`${BASE_URL}/auth/v1/token?grant_type=password`, {
+    const loginRes = await _safeFetch(`${BASE_URL}/auth/v1/token?grant_type=password`, {
       method: 'POST',
       headers: authHeaders,
       body: JSON.stringify({ email, password }),
@@ -145,9 +170,18 @@ async function _fullLogin() {
 
     const loginData = await loginRes.json();
 
-    // Si no pide MFA, login directo (sin 2FA)
-    if (loginData.access_token && !loginData.mfa) {
-      console.log('[Cocos] Login directo (sin MFA)');
+    if (!loginData.access_token) {
+      throw new Error('Login falló: ' + JSON.stringify(loginData).substring(0, 300));
+    }
+
+    // Paso 2: Verificar si necesita MFA (aal2)
+    // Supabase devuelve access_token aal1 + user.factors con los factores MFA
+    const factors = loginData.user?.factors || loginData.mfa?.factors || [];
+    const totpFactor = factors.find(f => f.factor_type === 'totp' && f.status === 'verified');
+
+    if (!totpFactor) {
+      // Sin factor MFA — login directo (aal1 suficiente)
+      console.log('[Cocos] Login sin MFA (aal1)');
       const accountId = parseInt(process.env.COCOS_ACCOUNT_ID || '1391716');
       _saveSession(loginData.access_token, loginData.refresh_token, loginData.expires_at, accountId);
       _ready = true;
@@ -155,22 +189,13 @@ async function _fullLogin() {
       return loginData.access_token;
     }
 
-    // Paso 2: Cocos pide MFA — extraer factorId
-    if (!loginData.mfa) {
-      throw new Error('Respuesta inesperada de login: ' + JSON.stringify(loginData).substring(0, 300));
-    }
+    console.log('[Cocos] MFA requerido (aal1→aal2), factor:', totpFactor.id);
 
-    const factorId = loginData.mfa.factors?.[0]?.id;
-    if (!factorId) {
-      throw new Error('No se encontró factor MFA: ' + JSON.stringify(loginData.mfa).substring(0, 300));
-    }
-
-    console.log('[Cocos] MFA requerido, factor:', factorId);
-
-    // Paso 3: Challenge
-    const challengeRes = await fetch(`${BASE_URL}/auth/v1/factors/${factorId}/challenge`, {
+    // Paso 3: Challenge — usar el access_token aal1 para autenticarse
+    const mfaHeaders = { ...authHeaders, 'Authorization': `Bearer ${loginData.access_token}` };
+    const challengeRes = await _safeFetch(`${BASE_URL}/auth/v1/factors/${totpFactor.id}/challenge`, {
       method: 'POST',
-      headers: authHeaders,
+      headers: mfaHeaders,
     });
 
     const challengeData = await challengeRes.json();
@@ -185,9 +210,9 @@ async function _fullLogin() {
     const totpCode = _generateTOTP(totpSec);
     console.log('[Cocos] TOTP generado (6 dígitos)');
 
-    const verifyRes = await fetch(`${BASE_URL}/auth/v1/factors/${factorId}/verify`, {
+    const verifyRes = await _safeFetch(`${BASE_URL}/auth/v1/factors/${totpFactor.id}/verify`, {
       method: 'POST',
-      headers: authHeaders,
+      headers: mfaHeaders,
       body: JSON.stringify({ challenge_id: challengeId, code: totpCode }),
     });
 
@@ -200,7 +225,7 @@ async function _fullLogin() {
     const accountId = parseInt(process.env.COCOS_ACCOUNT_ID || '1391716');
     _saveSession(verifyData.access_token, verifyData.refresh_token, verifyData.expires_at, accountId);
     _ready = true;
-    console.log('[Cocos] ✅ Full-login con MFA exitoso —', new Date().toLocaleString('es-AR'));
+    console.log('[Cocos] ✅ Full-login con MFA (aal2) exitoso —', new Date().toLocaleString('es-AR'));
     return verifyData.access_token;
 
   } finally {
@@ -213,13 +238,16 @@ async function _fullLogin() {
 async function _refresh() {
   if (!_session.refreshToken) throw new Error('Sin refresh token');
 
-  const res = await fetch(`${BASE_URL}/auth/v1/token?grant_type=refresh_token`, {
+  const res = await _safeFetch(`${BASE_URL}/auth/v1/token?grant_type=refresh_token`, {
     method: 'POST',
     headers: {
       'Content-Type':  'application/json',
       'apikey':        ANON_KEY,
       'Authorization': `Bearer ${ANON_KEY}`,
-      'User-Agent':    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      'User-Agent':    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+      'Accept':        'application/json',
+      'Origin':        'https://app.cocos.capital',
+      'Referer':       'https://app.cocos.capital/',
     },
     body: JSON.stringify({ refresh_token: _session.refreshToken }),
   });
