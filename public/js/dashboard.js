@@ -46,7 +46,7 @@
         apiFetch('/trading/bots').catch(() => []),
         apiFetch('/trading/trades/summary').catch(() => ({})),
         apiFetch('/crypto/status').catch(() => ({})),
-        apiFetch('/crypto/balance').catch(() => null),
+        apiFetch('/crypto/balance').catch(() => ({ error: 'no-connection' })),
         apiFetch('/crypto/summary').catch(() => ({})),
       ]);
 

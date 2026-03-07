@@ -71,7 +71,10 @@ router.get('/balance', async (req, res) => {
   try {
     const bal = await binance.getFirstBinanceBalance();
     res.json(bal || {});
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) {
+    console.log('[Crypto] Balance error:', (e.message || '').substring(0, 100));
+    res.json({ error: e.message || 'Error obteniendo balance' });
+  }
 });
 
 // Market tickers via Binance

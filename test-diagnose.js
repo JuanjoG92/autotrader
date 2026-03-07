@@ -70,5 +70,3 @@ function httpsGet(url, headers) {
     console.log('Request error:', e.message);
   }
 })();
-
-})();

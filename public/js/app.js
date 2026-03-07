@@ -22,11 +22,23 @@ async function apiFetch(path, opts = {}) {
   const token = getToken();
   const headers = { 'Content-Type': 'application/json', ...(opts.headers || {}) };
   if (token) headers['Authorization'] = 'Bearer ' + token;
-  const res = await fetch(API + path, { ...opts, headers });
-  if (res.status === 401) { clearToken(); window.location.href = '/login'; return null; }
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error || 'Error desconocido');
-  return data;
+  console.log('[API]', opts.method || 'GET', path);
+  try {
+    const res = await fetch(API + path, { ...opts, headers });
+    if (res.status === 401) { clearToken(); window.location.href = '/login'; return null; }
+    const text = await res.text();
+    let data;
+    try { data = JSON.parse(text); } catch { data = { error: text }; }
+    if (!res.ok) {
+      console.warn('[API] ERROR', path, res.status, data.error || text.substring(0, 100));
+      return data; // Return error object instead of throwing
+    }
+    console.log('[API] OK', path, typeof data === 'object' ? (Array.isArray(data) ? data.length + ' items' : Object.keys(data).join(',')) : '');
+    return data;
+  } catch (e) {
+    console.error('[API] FETCH FAIL', path, e.message);
+    return { error: e.message };
+  }
 }
 
 function formatNum(n, decimals = 2) {
