@@ -109,28 +109,26 @@
       if (pnlIcon) pnlIcon.className = 'stat-icon ' + (pnl >= 0 ? 'green' : 'red');
     }).catch(() => {});
 
-    // All operations history (LIVE trades marked, paper excluded if closed)
-    apiFetch('/crypto/history?limit=20').then(history => {
+    // All operations history
+    apiFetch('/crypto/history?limit=30').then(history => {
       if (!history || !Array.isArray(history) || !history.length) return;
       const tbody = document.getElementById('recentTrades');
-      // Show only LIVE trades (real Binance orders)
-      const relevant = history.filter(t => {
-        return t.order_id && !t.order_id.startsWith('PAPER');
-      });
-      if (!relevant.length) {
-        tbody.innerHTML = '<tr><td colspan="7" class="empty">Sin operaciones reales aún</td></tr>';
+      if (!history.length) {
+        tbody.innerHTML = '<tr><td colspan="7" class="empty">Sin operaciones aún</td></tr>';
         return;
       }
-      tbody.innerHTML = relevant.map(t => {
+      tbody.innerHTML = history.map(t => {
         const dt = formatDate(t.created_at);
         const sideCls = t.side === 'SELL' ? 'tag-sell' : 'tag-buy';
+        const isPaper = t.order_id && t.order_id.startsWith('PAPER');
         const statusCls = t.status === 'OPEN' ? 'tag-buy' : 'tag-sell';
         const statusTxt = t.status === 'OPEN' ? '🟢 Abierta' : '🔴 Cerrada';
+        const modeBadge = isPaper ? ' <small style="color:#f59e0b;font-size:10px">PAPER</small>' : ' <small style="color:#10b981;font-size:10px">LIVE</small>';
         const pnl = t.pnl ? (t.pnl >= 0 ? '+' : '') + formatNum(t.pnl) : '';
-        return `<tr>
+        return `<tr${isPaper ? ' style="opacity:0.6"' : ''}>
           <td>${dt}</td>
           <td><strong>${t.symbol}</strong></td>
-          <td><span class="${sideCls}">${t.side || 'BUY'}</span></td>
+          <td><span class="${sideCls}">${t.side || 'BUY'}</span>${modeBadge}</td>
           <td>${formatNum(t.quantity, 6)}</td>
           <td>$${formatNum(t.entry_price)}</td>
           <td>$${formatNum(t.entry_price * t.quantity)}</td>
