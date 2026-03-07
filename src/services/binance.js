@@ -76,15 +76,13 @@ function createExchange(apiKeyRow) {
 
   // Binance: usar endpoint alternativo que no bloquea IPs de datacenter
   if (exchangeName === 'binance') {
-    config.urls = {
-      api: {
-        public:  'https://data-api.binance.vision/api',
-        private: 'https://data-api.binance.vision/api',
-        sapi:    'https://data-api.binance.vision/sapi',
-        v1:      'https://data-api.binance.vision/api/v1',
-        v3:      'https://data-api.binance.vision/api/v3',
-      },
+    config.options = {
+      ...config.options,
+      defaultType: 'spot',
+      adjustForTimeDifference: true,
     };
+    // Override solo los hostnames, ccxt arma las rutas
+    config.hostname = 'data-api.binance.vision';
     // Proxy adicional si está configurado
     if (process.env.BINANCE_PROXY) {
       const proxy = process.env.BINANCE_PROXY;
