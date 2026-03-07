@@ -361,10 +361,8 @@ async function init() {
 
   _startTimer();
 
-  // Si el token actual es aal1 (sin MFA), programar reintentos de fullLogin en background
-  if (_ready && !_reloginAttempted) {
-    _scheduleReloginIfNeeded();
-  }
+  // Siempre programar reintentos si no se logró MFA completo
+  _scheduleReloginIfNeeded();
 
   console.log('[Cocos] Servicio activo. Account ID:', _session.accountId);
 }
