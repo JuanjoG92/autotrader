@@ -189,8 +189,52 @@ async function buildRAGContext(query) {
   return results.map(c => c.text).join('\n\n---\n\n');
 }
 
+// ── Auto-ingest de noticias diarias ──────────────────────────────────────────
+
+async function ingestDailyNews() {
+  const db = getDB();
+
+  // Verificar si ya se ingirió hoy
+  const today = new Date().toISOString().split('T')[0];
+  const existing = db.prepare(
+    "SELECT id FROM rag_documents WHERE name LIKE ? LIMIT 1"
+  ).get(`news-digest-${today}%`);
+  if (existing) return null;
+
+  // Obtener noticias de las últimas 24h
+  const newsRows = db.prepare(
+    "SELECT title, summary, keywords, source FROM news_items WHERE published_at > datetime('now', '-24 hours') ORDER BY published_at DESC LIMIT 100"
+  ).all();
+  if (newsRows.length < 5) return null;
+
+  // Construir documento resumen
+  const lines = newsRows.map(n => {
+    const kw = n.keywords ? ` [${n.keywords}]` : '';
+    return `[${n.source}] ${n.title}${n.summary ? ': ' + n.summary.substring(0, 150) : ''}${kw}`;
+  });
+  const content = `RESUMEN DE NOTICIAS FINANCIERAS — ${today}\n${newsRows.length} noticias de las últimas 24h.\n\n` + lines.join('\n\n');
+
+  // Ingerir como documento RAG
+  const result = await ingestDocument(`news-digest-${today}`, 'auto-news', content);
+  console.log(`[RAG] Auto-ingest noticias: ${result.chunksCount} chunks del ${today}`);
+
+  // Limpiar digests viejos (mantener últimos 7 días)
+  const oldDocs = db.prepare(
+    "SELECT id FROM rag_documents WHERE type = 'auto-news' ORDER BY created_at DESC"
+  ).all();
+  if (oldDocs.length > 7) {
+    for (const old of oldDocs.slice(7)) {
+      deleteDocument(old.id);
+    }
+    console.log(`[RAG] Limpieza: eliminados ${oldDocs.length - 7} digests antiguos`);
+  }
+
+  return result;
+}
+
 module.exports = {
   ingestDocument,
+  ingestDailyNews,
   getDocuments,
   getDocument,
   deleteDocument,

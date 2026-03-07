@@ -188,6 +188,13 @@ async function fetchAllFeeds() {
     await new Promise(r => setTimeout(r, 1000)); // pausa entre feeds
   }
   console.log(`[News] Total noticias nuevas: ${total}`);
+
+  // Auto-ingest al RAG (1 vez por día)
+  try {
+    const rag = require('./rag');
+    if (rag.ingestDailyNews) await rag.ingestDailyNews();
+  } catch (e) { console.warn('[News] RAG ingest:', e.message); }
+
   return total;
 }
 

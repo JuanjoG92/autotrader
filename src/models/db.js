@@ -182,7 +182,7 @@ function initDB() {
       id INTEGER PRIMARY KEY DEFAULT 1,
       enabled INTEGER DEFAULT 1,
       monitor_enabled INTEGER DEFAULT 1,
-      invest_pct INTEGER DEFAULT 90,
+      invest_pct INTEGER DEFAULT 50,
       min_invest_ars REAL DEFAULT 10000,
       stop_loss_pct REAL DEFAULT 5.0,
       take_profit_pct REAL DEFAULT 10.0,

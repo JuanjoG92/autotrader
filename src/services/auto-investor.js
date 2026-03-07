@@ -39,7 +39,17 @@ const CANDIDATES = {
 let _checkTimer   = null;
 let _monitorTimer = null;
 let _broadcastFn  = null;
-let _lastInvestDate = null;
+
+// Verificar en DB si ya se invirtió hoy (persiste entre restarts de PM2)
+function _alreadyInvestedToday() {
+  try {
+    const today = new Date().toISOString().split('T')[0];
+    const row = getDB().prepare(
+      "SELECT COUNT(*) as c FROM auto_investments WHERE action='BUY' AND status IN ('EXECUTED','PENDING') AND date(created_at) = ?"
+    ).get(today);
+    return row.c > 0;
+  } catch { return false; }
+}
 
 // ── DB helpers ────────────────────────────────────────────────────────────────
 
@@ -195,9 +205,8 @@ async function executeAutoInvest() {
   if (!marketOpen) marketOpen = isMarketHours();
   if (!marketOpen) return null;
 
-  // Ya invertido hoy?
-  const today = new Date().toISOString().split('T')[0];
-  if (_lastInvestDate === today) return null;
+  // Ya invertido hoy? (check en DB — sobrevive restarts PM2)
+  if (!_forceOverride && _alreadyInvestedToday()) return null;
 
   console.log('[AutoInvest] 🚀 Mercado abierto — iniciando inversión automática…');
 
@@ -214,13 +223,12 @@ async function executeAutoInvest() {
   const minInvest = cfg.min_invest_ars || 10000;
   if (buyingPower < minInvest) {
     console.log(`[AutoInvest] Capital insuficiente: $${buyingPower} (mín $${minInvest})`);
-    _lastInvestDate = today;          // no reintentar hoy
     return null;
   }
 
-  const investPct    = (cfg.invest_pct || 90) / 100;
+  const investPct    = (cfg.invest_pct || 50) / 100;
   const totalInvest  = Math.floor(buyingPower * investPct);
-  console.log(`[AutoInvest] Capital: $${buyingPower} → Invertir: $${totalInvest} (${cfg.invest_pct||90}%)`);
+  console.log(`[AutoInvest] Capital: $${buyingPower} → Invertir: $${totalInvest} (${cfg.invest_pct||50}%)`);
 
   // IA selecciona los 3 mejores
   let selection;
@@ -243,7 +251,6 @@ async function executeAutoInvest() {
 
   if (selection.risk_assessment === 'HIGH' && !cfg.allow_high_risk) {
     console.log('[AutoInvest] ⚠️ Riesgo alto — no se invierte hoy');
-    _lastInvestDate = today;
     return { skipped: true, reason: 'Riesgo alto', selection };
   }
 
@@ -269,17 +276,32 @@ async function executeAutoInvest() {
       console.log(`[AutoInvest] 📈 BUY ${sel.ticker}: ${quantity}x @ $${price} = $${total} | SL:$${stopLoss} TP:$${takeProfit}`);
 
       const order   = await cocos.placeBuyOrder(sel.ticker, quantity, price, '24hs', 'ARS', 'C');
-      const orderId = order?.Orden || order?.id || 'OK';
+      const orderId = order?.Orden || order?.id || '';
+
+      // Verificar estado real de la orden (esperar 2s para que Cocos procese)
+      let orderStatus = 'PENDING';
+      if (orderId && orderId !== 'OK') {
+        await new Promise(r => setTimeout(r, 2000));
+        try {
+          const status = await cocos.getOrderStatus(orderId);
+          orderStatus = status?.status || status?.state || 'PENDING';
+          if (['FILLED', 'COMPLETED', 'EXECUTED'].includes(orderStatus.toUpperCase())) {
+            orderStatus = 'EXECUTED';
+          }
+        } catch { orderStatus = 'PENDING'; }
+      } else {
+        orderStatus = 'EXECUTED';
+      }
 
       const inv = {
         ticker: sel.ticker, action: 'BUY', quantity, price, total_ars: total,
-        order_id: orderId, status: 'EXECUTED',
+        order_id: orderId, status: orderStatus,
         stop_loss_price: stopLoss, take_profit_price: takeProfit,
         reason: `${sel.reason} | Confianza: ${(sel.confidence*100).toFixed(0)}% | ${sel.category}`,
       };
       saveInvestment(inv);
       results.push(inv);
-      console.log(`[AutoInvest] ✅ Orden ejecutada: ${sel.ticker} x${quantity} — #${orderId}`);
+      console.log(`[AutoInvest] ✅ Orden ${orderStatus}: ${sel.ticker} x${quantity} — #${orderId}`);
 
       await new Promise(r => setTimeout(r, 1000));
     } catch (e) {
@@ -287,8 +309,6 @@ async function executeAutoInvest() {
       saveInvestment({ ticker: sel.ticker, action: 'BUY', quantity: 0, price: 0, total_ars: 0, status: 'FAILED', reason: `Error: ${e.message}` });
     }
   }
-
-  _lastInvestDate = today;
 
   const summary = {
     type: 'auto_invest',
@@ -380,9 +400,12 @@ async function executeSell(position, currentPrice, reason) {
 
 // ── Forzar inversión manual ───────────────────────────────────────────────────
 
+let _forceOverride = false;
+
 async function forceInvest() {
-  _lastInvestDate = null;
-  return executeAutoInvest();
+  _forceOverride = true;
+  try { return await executeAutoInvest(); }
+  finally { _forceOverride = false; }
 }
 
 // ── Init ──────────────────────────────────────────────────────────────────────
