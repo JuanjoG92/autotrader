@@ -74,13 +74,22 @@ function createExchange(apiKeyRow) {
     options: { defaultType: 'spot' },
   };
 
-  // Proxy for Binance (VPS IP is geo-blocked by Binance)
-  if (exchangeName === 'binance' && process.env.BINANCE_PROXY) {
-    const proxy = process.env.BINANCE_PROXY;
-    if (proxy.startsWith('socks')) {
-      config.socksProxy = proxy;
-    } else {
-      config.httpsProxy = proxy;
+  // Binance: usar endpoint alternativo que no bloquea IPs de datacenter
+  if (exchangeName === 'binance') {
+    config.urls = {
+      api: {
+        public:  'https://data-api.binance.vision/api',
+        private: 'https://data-api.binance.vision/api',
+        sapi:    'https://data-api.binance.vision/sapi',
+        v1:      'https://data-api.binance.vision/api/v1',
+        v3:      'https://data-api.binance.vision/api/v3',
+      },
+    };
+    // Proxy adicional si está configurado
+    if (process.env.BINANCE_PROXY) {
+      const proxy = process.env.BINANCE_PROXY;
+      if (proxy.startsWith('socks')) config.socksProxy = proxy;
+      else config.httpsProxy = proxy;
     }
   }
 
