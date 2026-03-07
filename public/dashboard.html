@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Dashboard - AutoTrader</title>
-  <link rel="stylesheet" href="/css/app.css?v=20260307d">
+  <link rel="stylesheet" href="/css/app.css?v=20260307e">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
@@ -46,14 +46,13 @@
     </div>
   </aside>
 
-  <!-- Mobile topbar -->
-  <header class="topbar">
-    <button class="btn-icon" onclick="document.getElementById('sidebar').classList.toggle('open');document.getElementById('sidebarOverlay').classList.toggle('open')">
-      <i class="fas fa-bars"></i>
-    </button>
-    <span class="topbar-title">AutoTrader</span>
-    <button class="btn-icon" onclick="logout()"><i class="fas fa-sign-out-alt"></i></button>
-  </header>
+  <!-- Mobile: floating buttons (hidden on desktop via CSS) -->
+  <button class="mob-menu-btn" onclick="document.getElementById('sidebar').classList.toggle('open');document.getElementById('sidebarOverlay').classList.toggle('open')">
+    <i class="fas fa-bars"></i>
+  </button>
+  <button class="mob-logout-btn" onclick="logout()">
+    <i class="fas fa-sign-out-alt"></i>
+  </button>
   <div class="sidebar-overlay" id="sidebarOverlay" onclick="document.getElementById('sidebar').classList.remove('open');this.classList.remove('open')"></div>
 
   <!-- Main Content -->
