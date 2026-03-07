@@ -50,4 +50,12 @@ router.get('/history', (req, res) => {
   res.json(crypto.getPositionHistory(req.query.limit || 30));
 });
 
+// Limpiar posiciones paper y resetear
+router.post('/reset', (req, res) => {
+  const { getDB } = require('../models/db');
+  const db = getDB();
+  const r = db.prepare("UPDATE crypto_positions SET status = 'CLOSED', reason = 'manual reset' WHERE status = 'OPEN'").run();
+  res.json({ ok: true, closed: r.changes });
+});
+
 module.exports = router;
