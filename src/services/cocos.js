@@ -54,22 +54,25 @@ function _saveSession(access, refresh, expiresAt, accountId) {
 
 // ── HTTP ─────────────────────────────────────────────────────────────────────
 
+let _reloginAttempted = false; // evitar loops de relogin
+
 async function _call(method, path, body, tokenOverride) {
   const token = tokenOverride || _session.accessToken;
   if (!token) throw new Error('Sin sesión Cocos activa');
 
+  const hdrs = {
+    'Content-Type':  'application/json',
+    'apikey':        ANON_KEY,
+    'Authorization': `Bearer ${token}`,
+    'x-account-id':  String(_session.accountId),
+    'User-Agent':    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+    'Accept':        'application/json',
+    'Origin':        'https://app.cocos.capital',
+    'Referer':       'https://app.cocos.capital/',
+  };
+
   const res = await fetch(`${BASE_URL}/${path}`, {
-    method,
-    headers: {
-      'Content-Type':  'application/json',
-      'apikey':        ANON_KEY,
-      'Authorization': `Bearer ${token}`,
-      'x-account-id':  String(_session.accountId),
-      'User-Agent':    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-      'Accept':        'application/json',
-      'Origin':        'https://app.cocos.capital',
-      'Referer':       'https://app.cocos.capital/',
-    },
+    method, headers: hdrs,
     body: body ? JSON.stringify(body) : undefined,
   });
 
@@ -79,10 +82,31 @@ async function _call(method, path, body, tokenOverride) {
 
   if (!res.ok) {
     const msg = data?.message || data?.error || `HTTP ${res.status}`;
+
+    // Auto-relogin si Cocos pide MFA upgrade o JWT expirado
+    const needsRelogin = (res.status === 401 || res.status === 403) &&
+      (msg.includes('ssurance') || msg.includes('upgrade') || msg.includes('jwt expired'));
+
+    if (needsRelogin && !_reloginAttempted && !tokenOverride) {
+      _reloginAttempted = true;
+      console.log(`[Cocos] ${msg} — intentando re-login automático...`);
+      try {
+        await _fullLogin();
+        _reloginAttempted = false;
+        // Reintentar la llamada original con el nuevo token
+        return _call(method, path, body);
+      } catch (e) {
+        _reloginAttempted = false;
+        console.error('[Cocos] Re-login falló:', e.message);
+      }
+    }
+    _reloginAttempted = false;
+
     const err = new Error(`Cocos: ${msg}`);
     err.status = res.status;
     throw err;
   }
+  _reloginAttempted = false;
   return data;
 }
 
@@ -116,19 +140,19 @@ function _generateTOTP(secret) {
 // ── Full Login (fallback) ─────────────────────────────────────────────────────
 
 // Helper: fetch seguro que detecta Cloudflare challenges y reintenta
-async function _safeFetch(url, opts, retries = 2) {
+async function _safeFetch(url, opts, retries = 4) {
   for (let i = 0; i <= retries; i++) {
     const res = await fetch(url, opts);
     const ct = res.headers.get('content-type') || '';
     // Cloudflare devuelve HTML en vez de JSON
     if (ct.includes('text/html') || (!ct.includes('json') && res.status === 403)) {
       if (i < retries) {
-        const wait = (i + 1) * 3000;
-        console.warn(`[Cocos] Cloudflare challenge detectado, reintentando en ${wait/1000}s...`);
+        const wait = 5000 + i * 8000; // 5s, 13s, 21s, 29s
+        console.warn(`[Cocos] Cloudflare challenge (intento ${i+1}/${retries+1}), esperando ${Math.round(wait/1000)}s...`);
         await new Promise(r => setTimeout(r, wait));
         continue;
       }
-      throw new Error('Cloudflare bloqueó la request — reintentá en unos minutos');
+      throw new Error('Cloudflare bloqueó la request tras ' + (retries+1) + ' intentos');
     }
     return res;
   }
@@ -336,10 +360,44 @@ async function init() {
   }
 
   _startTimer();
+
+  // Si el token actual es aal1 (sin MFA), programar reintentos de fullLogin en background
+  if (_ready && !_reloginAttempted) {
+    _scheduleReloginIfNeeded();
+  }
+
   console.log('[Cocos] Servicio activo. Account ID:', _session.accountId);
 }
 
-// ── Helpers de mercado ────────────────────────────────────────────────────────
+// Intenta fullLogin cada 5 min en background hasta tener aal2
+let _reloginRetryTimer = null;
+function _scheduleReloginIfNeeded() {
+  if (_reloginRetryTimer) return;
+  _reloginRetryTimer = setInterval(async () => {
+    if (!_ready) return;
+    try {
+      // Testear si tenemos aal2 intentando un endpoint financiero
+      await _call('GET', 'api/v2/orders/buying-power');
+      console.log('[Cocos] ✅ Token aal2 confirmado — deteniendo reintentos');
+      clearInterval(_reloginRetryTimer);
+      _reloginRetryTimer = null;
+    } catch (e) {
+      if (e.message?.includes('ssurance') || e.message?.includes('upgrade')) {
+        console.log('[Cocos] Token aal1 detectado, intentando upgrade via fullLogin...');
+        try {
+          await _fullLogin();
+          console.log('[Cocos] ✅ Upgrade a aal2 exitoso');
+          clearInterval(_reloginRetryTimer);
+          _reloginRetryTimer = null;
+        } catch (e2) {
+          console.warn('[Cocos] Reintento fullLogin pendiente:', e2.message);
+        }
+      }
+    }
+  }, 5 * 60 * 1000); // cada 5 min
+}
+
+// ── Helpers de mercado
 
 function buildLongTicker(ticker, settlement, currency, segment) {
   const s = SETTLEMENT_MAP[settlement] || '0002';

@@ -9,9 +9,9 @@ const cocos    = require('../services/cocos');
 const OWNER_ID = parseInt(process.env.COCOS_OWNER_USER_ID || '1');
 
 // Helper: mapear errores de Cocos API para no confundir al frontend
-// 401 de Cocos = "sesión Cocos inválida" → devolver 502 (no 401, que el front interpreta como JWT expirado)
+// 401/403 de Cocos = error de sesión Cocos → devolver 502 (no 401/403, que el front interpreta como JWT/permisos)
 function cocosErrorStatus(e) {
-  if (e.status === 401) return 502; // Cocos auth error → 502 para el frontend
+  if (e.status === 401 || e.status === 403) return 502;
   return e.status || 500;
 }
 
