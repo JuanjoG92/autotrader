@@ -38,52 +38,20 @@
   connectPriceStream();
   loadOverview();
   loadKeys();
+  setInterval(loadOverview, 30000);
 
-  // ── Overview ──
+  // ── Overview (progressive loading — cada dato se muestra al llegar) ──
   async function loadOverview() {
-    try {
-      const [bots, summary, cryptoStatus, cryptoBalance, cryptoSummary] = await Promise.all([
-        apiFetch('/trading/bots').catch(() => []),
-        apiFetch('/trading/trades/summary').catch(() => ({})),
-        apiFetch('/crypto/status').catch(() => ({})),
-        apiFetch('/crypto/balance').catch(() => ({ error: 'no-connection' })),
-        apiFetch('/crypto/summary').catch(() => ({})),
-      ]);
-
-      const activeBots = Array.isArray(bots) ? bots.filter(b => b.status === 'active').length : 0;
-      const openPositions = cryptoStatus.openPositions || 0;
-      document.getElementById('activeBots').textContent = activeBots + openPositions;
-
-      const totalTrades = (summary.total || 0) + (cryptoSummary.total_positions || 0);
-      document.getElementById('totalTrades').textContent = totalTrades;
-      document.getElementById('totalVolume').textContent = formatUSD(summary.volume || 0);
-
-      const pnl = (summary.total_pnl || 0) + (cryptoSummary.total_pnl || 0);
-      document.getElementById('totalPnl').textContent = (pnl >= 0 ? '+' : '') + formatUSD(pnl);
-      const pnlIcon = document.getElementById('pnlIcon');
-      pnlIcon.className = 'stat-icon ' + (pnl >= 0 ? 'green' : 'red');
-
-      // Binance balance
-      const balEl = document.getElementById('binanceBalance');
-      if (cryptoBalance && typeof cryptoBalance === 'object' && !cryptoBalance.error) {
-        if (cryptoBalance.USDT) {
-          balEl.textContent = '$' + formatNum(cryptoBalance.USDT.free || cryptoBalance.USDT.total || 0);
-        } else {
-          const total = Object.values(cryptoBalance).reduce((s, a) => s + (a.total || 0), 0);
-          balEl.textContent = total > 0 ? '$' + formatNum(total) : '$0.00';
-        }
-      } else {
-        balEl.textContent = cryptoBalance?.error ? 'Error' : 'Sin datos';
-      }
-
-      // Crypto AI status
+    // Fast local data first (no proxy needed)
+    apiFetch('/crypto/status').then(s => {
+      if (!s || s.error) return;
+      const openPositions = s.openPositions || 0;
+      document.getElementById('activeBots').textContent = openPositions;
       const aiEl = document.getElementById('cryptoAiStatus');
-      if (cryptoStatus.enabled !== undefined) {
-        aiEl.textContent = cryptoStatus.enabled ? '🟢 Activa (' + openPositions + ' pos)' : '⏸ Inactiva';
-      }
+      aiEl.textContent = s.enabled ? '🟢 Activa (' + openPositions + ' pos)' : '⏸ Inactiva';
 
-      // Crypto positions
-      const positions = cryptoStatus.positions || [];
+      // Positions table
+      const positions = s.positions || [];
       const posCard = document.getElementById('cryptoPositionsCard');
       const posBody = document.getElementById('cryptoPositions');
       if (positions.length > 0) {
@@ -93,7 +61,7 @@
           const cls = parseFloat(pnlPct) >= 0 ? 'tag-buy' : 'tag-sell';
           return `<tr>
             <td><strong>${p.symbol}</strong></td>
-            <td><span class="tag-buy">BUY</span></td>
+            <td><span class="tag-buy">${p.side || 'BUY'}</span></td>
             <td>${formatNum(p.qty, 6)}</td>
             <td>$${formatNum(p.entry)}</td>
             <td>$${formatNum(p.current)}</td>
@@ -103,13 +71,57 @@
       } else {
         posCard.style.display = 'none';
       }
+    }).catch(() => {});
 
-      const trades = await apiFetch('/trading/trades?limit=10').catch(() => []);
-      renderTrades('recentTrades', Array.isArray(trades) ? trades : [], false);
-    } catch (err) {
-      console.error('Overview error:', err);
-      setTimeout(loadOverview, 3000);
-    }
+    apiFetch('/crypto/summary').then(s => {
+      if (!s || s.error) return;
+      document.getElementById('totalTrades').textContent = s.total_positions || 0;
+      const pnl = s.total_pnl || 0;
+      document.getElementById('totalPnl').textContent = (pnl >= 0 ? '+' : '') + formatUSD(pnl);
+      const pnlIcon = document.getElementById('pnlIcon');
+      if (pnlIcon) pnlIcon.className = 'stat-icon ' + (pnl >= 0 ? 'green' : 'red');
+    }).catch(() => {});
+
+    apiFetch('/trading/trades/summary').then(s => {
+      if (!s || s.error) return;
+      document.getElementById('totalVolume').textContent = formatUSD(s.volume || 0);
+    }).catch(() => {});
+
+    // Crypto history as recent trades (replaces empty trades table)
+    apiFetch('/crypto/history?limit=10').then(history => {
+      if (!history || !Array.isArray(history) || !history.length) return;
+      const tbody = document.getElementById('recentTrades');
+      tbody.innerHTML = history.map(t => {
+        const pnl = t.pnl || 0;
+        const pnlCls = pnl >= 0 ? 'tag-buy' : 'tag-sell';
+        const dt = formatDate(t.created_at);
+        return `<tr>
+          <td>${dt}</td>
+          <td><strong>${t.symbol}</strong></td>
+          <td><span class="tag-buy">${t.side || 'BUY'}</span></td>
+          <td>${formatNum(t.quantity, 6)}</td>
+          <td>$${formatNum(t.entry_price)}</td>
+          <td>$${formatNum(t.entry_price * t.quantity)}</td>
+        </tr>`;
+      }).join('');
+    }).catch(() => {});
+
+    // Balance (slowest — goes through SOCKS proxy, load independently)
+    apiFetch('/crypto/balance').then(bal => {
+      const balEl = document.getElementById('binanceBalance');
+      if (bal && typeof bal === 'object' && !bal.error) {
+        if (bal.USDT) {
+          balEl.textContent = '$' + formatNum(bal.USDT.free || bal.USDT.total || 0);
+        } else {
+          const total = Object.values(bal).reduce((s, a) => s + (a.total || 0), 0);
+          balEl.textContent = total > 0 ? '$' + formatNum(total) : '$0.00';
+        }
+      } else {
+        balEl.textContent = bal?.error ? 'Reconectando...' : '$---';
+      }
+    }).catch(() => {
+      document.getElementById('binanceBalance').textContent = '$---';
+    });
   }
 
   // ── Bots ──
