@@ -113,28 +113,28 @@
     apiFetch('/crypto/history?limit=20').then(history => {
       if (!history || !Array.isArray(history) || !history.length) return;
       const tbody = document.getElementById('recentTrades');
-      // Show: all LIVE trades + OPEN positions (even paper ones that are being monitored)
+      // Show only LIVE trades (real Binance orders)
       const relevant = history.filter(t => {
-        const isLive = t.order_id && !t.order_id.startsWith('PAPER');
-        const isOpen = t.status === 'OPEN';
-        return isLive || isOpen;
+        return t.order_id && !t.order_id.startsWith('PAPER');
       });
       if (!relevant.length) {
-        tbody.innerHTML = '<tr><td colspan="6" class="empty">Sin operaciones reales aún</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="7" class="empty">Sin operaciones reales aún</td></tr>';
         return;
       }
       tbody.innerHTML = relevant.map(t => {
         const dt = formatDate(t.created_at);
-        const isLive = t.order_id && !t.order_id.startsWith('PAPER');
-        const icon = isLive ? '✅' : '📋';
         const sideCls = t.side === 'SELL' ? 'tag-sell' : 'tag-buy';
+        const statusCls = t.status === 'OPEN' ? 'tag-buy' : 'tag-sell';
+        const statusTxt = t.status === 'OPEN' ? '🟢 Abierta' : '🔴 Cerrada';
+        const pnl = t.pnl ? (t.pnl >= 0 ? '+' : '') + formatNum(t.pnl) : '';
         return `<tr>
           <td>${dt}</td>
           <td><strong>${t.symbol}</strong></td>
           <td><span class="${sideCls}">${t.side || 'BUY'}</span></td>
           <td>${formatNum(t.quantity, 6)}</td>
           <td>$${formatNum(t.entry_price)}</td>
-          <td>$${formatNum(t.entry_price * t.quantity)} ${icon}</td>
+          <td>$${formatNum(t.entry_price * t.quantity)}</td>
+          <td><span class="${statusCls}">${statusTxt}</span> ${pnl ? '<small>'+pnl+'</small>' : ''}</td>
         </tr>`;
       }).join('');
     }).catch(() => {});
