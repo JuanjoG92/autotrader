@@ -104,6 +104,23 @@ router.post('/order', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// Actualizar API Key de Binance
+router.post('/update-key', async (req, res) => {
+  try {
+    const { apiKey, apiSecret } = req.body;
+    if (!apiKey || !apiSecret) return res.status(400).json({ error: 'apiKey y apiSecret requeridos' });
+    const result = binance.resaveApiKey(apiKey.trim(), apiSecret.trim());
+    // Test connection with new key
+    try {
+      const bal = await binance.getFirstBinanceBalance();
+      const usdt = bal?.USDT?.free || 0;
+      res.json({ ok: true, ...result, balance_usdt: usdt, message: 'API Key actualizada y verificada' });
+    } catch (e) {
+      res.json({ ok: true, ...result, warning: 'Key guardada pero falló la verificación: ' + e.message });
+    }
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // Limpiar posiciones paper y resetear
 router.post('/reset', (req, res) => {
   const db = getDB();

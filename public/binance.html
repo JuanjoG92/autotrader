@@ -199,6 +199,26 @@
         </button>
         <div id="orderResult" style="margin-top:.5rem;font-size:.75rem"></div>
       </div>
+
+      <!-- API Key -->
+      <div class="card" id="apiKeyCard" style="display:none">
+        <div class="card-title"><i class="fas fa-key"></i> Actualizar API Key</div>
+        <div class="form-group">
+          <div class="form-label">API Key</div>
+          <input type="text" id="newApiKey" class="form-control" placeholder="Pegá tu API Key">
+        </div>
+        <div class="form-group">
+          <div class="form-label">Secret</div>
+          <input type="password" id="newApiSecret" class="form-control" placeholder="Pegá tu Secret">
+        </div>
+        <button class="btn btn-primary btn-block" onclick="updateApiKey()">
+          <i class="fas fa-save"></i> Guardar y Verificar
+        </button>
+        <div id="keyResult" style="margin-top:.5rem;font-size:.75rem"></div>
+        <div style="margin-top:.4rem;font-size:.68rem;color:var(--muted)">
+          ⚠️ Asegurate que la IP del proxy esté en la whitelist de Binance
+        </div>
+      </div>
     </div>
 
     <!-- CENTER: Market Table -->
@@ -332,11 +352,15 @@ async function loadBalance() {
   const el = document.getElementById('balanceSection');
   const badge = document.getElementById('proxyBadge');
   if (!bal || bal.error) {
-    el.innerHTML = `<div class="funds-big" style="color:var(--red)">Error</div><div class="funds-label">${bal?.error || 'Sin conexión'}</div>`;
+    const errMsg = bal?.error || 'Sin conexión';
+    const isKeyError = errMsg.includes('inv\u00e1lida') || errMsg.includes('expirada') || errMsg.includes('-2008') || errMsg.includes('Invalid Api-Key');
+    el.innerHTML = `<div class="funds-big" style="color:var(--red);font-size:1rem">${isKeyError ? '🔑 API Key Inválida' : '⚠️ Error'}</div><div class="funds-label" style="margin-top:.25rem">${errMsg}</div>`;
     badge.className = 'topbar-badge badge-off';
-    badge.innerHTML = '<i class="fas fa-circle" style="font-size:.5rem"></i> Sin conexión';
+    badge.innerHTML = '<i class="fas fa-circle" style="font-size:.5rem"></i> ' + (isKeyError ? 'Key inválida' : 'Error');
+    document.getElementById('apiKeyCard').style.display = '';
     return;
   }
+  document.getElementById('apiKeyCard').style.display = 'none';
   badge.className = 'topbar-badge badge-on';
   badge.innerHTML = '<i class="fas fa-circle" style="font-size:.5rem"></i> Conectado';
 
@@ -527,6 +551,25 @@ async function triggerAnalysis() {
     document.getElementById('aiSentiment').textContent = sent;
   }
   loadPositions(); loadHistory();
+}
+
+// ── Update API Key ──
+async function updateApiKey() {
+  const apiKey = document.getElementById('newApiKey').value.trim();
+  const apiSecret = document.getElementById('newApiSecret').value.trim();
+  const el = document.getElementById('keyResult');
+  if (!apiKey || !apiSecret) { el.innerHTML = '<span style="color:var(--red)">Completá ambos campos</span>'; return; }
+  el.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Guardando y verificando...';
+  const r = await api('POST', '/crypto/update-key', { apiKey, apiSecret });
+  if (!r || r.error) { el.innerHTML = `<span style="color:var(--red)">❌ ${r?.error||'Error'}</span>`; return; }
+  if (r.warning) {
+    el.innerHTML = `<span style="color:var(--amber)">⚠️ ${r.warning}</span>`;
+  } else {
+    el.innerHTML = `<span style="color:var(--green)">✅ ${r.message} — USDT: $${fmt(r.balance_usdt||0)}</span>`;
+    document.getElementById('newApiKey').value = '';
+    document.getElementById('newApiSecret').value = '';
+  }
+  loadBalance();
 }
 
 // ── WebSocket ──

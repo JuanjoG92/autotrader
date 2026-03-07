@@ -201,17 +201,37 @@ async function testConnection(userId, apiKeyId) {
     return { success: true, totalAssets: Object.keys(balance.total).filter(k => balance.total[k] > 0).length };
   } catch (e) {
     const msg = e.message || '';
+    if (msg.includes('-2008') || msg.includes('Invalid Api-Key')) {
+      throw new Error('API Key inválida o expirada en Binance. Creá una nueva en binance.com y actualizala acá.');
+    }
+    if (msg.includes('-2015') || msg.includes('Invalid API-key, IP')) {
+      throw new Error('IP no autorizada. Tu API key está restringida a una IP diferente. Actualizá la restricción de IP en Binance.');
+    }
     if (msg.includes('restricted location') || msg.includes('Service unavailable') || msg.includes('451')) {
-      // Binance bloquea esta IP — verificar que la API key es válida con endpoint público
       try {
         await exchange.fetchTicker('BTC/USDT');
-        return { success: true, totalAssets: -1, warning: 'Binance bloquea esta IP para datos privados. API key parece válida. Se requiere proxy o VPS fuera de USA.' };
+        return { success: true, totalAssets: -1, warning: 'Binance bloquea esta IP para datos privados. Se requiere proxy SOCKS.' };
       } catch {
-        throw new Error('Binance bloquea la IP del servidor (datacenter USA). Necesitás un VPS fuera de USA o un proxy.');
+        throw new Error('Binance bloquea la IP del servidor. Verificá que el túnel SSH esté activo.');
       }
     }
     throw e;
   }
+}
+
+async function resaveApiKey(apiKey, apiSecret) {
+  const db = getDB();
+  const { encrypt } = require('./encryption');
+  const encKey = encrypt(apiKey);
+  const encSecret = encrypt(apiSecret);
+  const row = db.prepare("SELECT id FROM api_keys WHERE exchange = 'binance' LIMIT 1").get();
+  if (row) {
+    db.prepare('UPDATE api_keys SET api_key_enc = ?, api_secret_enc = ? WHERE id = ?').run(encKey, encSecret, row.id);
+    return { id: row.id, updated: true };
+  }
+  const r = db.prepare('INSERT INTO api_keys (user_id, exchange, label, api_key_enc, api_secret_enc, permissions) VALUES (?,?,?,?,?,?)')
+    .run(1, 'binance', 'autotrader', encKey, encSecret, 'spot');
+  return { id: r.lastInsertRowid, updated: false };
 }
 
 async function getTopPairs() {
@@ -240,13 +260,21 @@ async function getFirstBinanceBalance() {
   const db = getDB();
   const row = db.prepare("SELECT * FROM api_keys WHERE exchange = 'binance' LIMIT 1").get();
   if (!row) return null;
-  const exchange = createExchange(row);
-  const balance = await exchange.fetchBalance();
-  const assets = {};
-  for (const [coin, info] of Object.entries(balance.total)) {
-    if (info > 0) assets[coin] = { total: info, free: balance.free[coin] || 0, used: balance.used[coin] || 0 };
+  try {
+    const exchange = createExchange(row);
+    const balance = await exchange.fetchBalance();
+    const assets = {};
+    for (const [coin, info] of Object.entries(balance.total)) {
+      if (info > 0) assets[coin] = { total: info, free: balance.free[coin] || 0, used: balance.used[coin] || 0 };
+    }
+    return assets;
+  } catch (e) {
+    const msg = e.message || '';
+    if (msg.includes('-2008') || msg.includes('Invalid Api-Key')) {
+      throw new Error('API Key de Binance inválida o expirada. Actualizala desde la página de Binance.');
+    }
+    throw e;
   }
-  return assets;
 }
 
-module.exports = { getBalances, getTicker, getOHLCV, createOrder, testConnection, getExchangeForUser, getTopPairs, getFirstBinanceBalance, SUPPORTED_EXCHANGES };
+module.exports = { getBalances, getTicker, getOHLCV, createOrder, testConnection, getExchangeForUser, getTopPairs, getFirstBinanceBalance, resaveApiKey, SUPPORTED_EXCHANGES };
