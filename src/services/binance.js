@@ -74,16 +74,13 @@ function createExchange(apiKeyRow) {
     options: { defaultType: 'spot' },
   };
 
-  // Binance: usar endpoint alternativo que no bloquea IPs de datacenter
+  // Binance: proxy SOCKS para bypass geo-block (túnel SSH desde PC argentina)
   if (exchangeName === 'binance') {
     config.options = {
       ...config.options,
       defaultType: 'spot',
       adjustForTimeDifference: true,
     };
-    // Override solo los hostnames, ccxt arma las rutas
-    config.hostname = 'data-api.binance.vision';
-    // Proxy adicional si está configurado
     if (process.env.BINANCE_PROXY) {
       const proxy = process.env.BINANCE_PROXY;
       if (proxy.startsWith('socks')) config.socksProxy = proxy;
