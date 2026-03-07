@@ -159,25 +159,6 @@ function _getSharedExchange() {
 
 // ── Market data: Binance via proxy first, CoinGecko fallback ──
 
-// Batch fetch all tickers in ONE call (much faster than 10 individual calls)
-async function getTickersBatch(pairs) {
-  try {
-    const exchange = _getSharedExchange();
-    const tickers = await exchange.fetchTickers(pairs);
-    const result = {};
-    for (const pair of pairs) {
-      const t = tickers[pair];
-      if (t && t.last > 0) {
-        result[pair] = { symbol: pair, last: t.last, percentage: t.percentage || 0, quoteVolume: t.quoteVolume || 0 };
-      }
-    }
-    return result;
-  } catch (e) {
-    console.log('[Binance] fetchTickers batch failed, falling back to individual:', (e.message || '').substring(0, 60));
-    return null;
-  }
-}
-
 async function getTicker(pair) {
   // Try Binance exchange via proxy
   try {
@@ -388,4 +369,4 @@ function _getBinanceTime() {
   });
 }
 
-module.exports = { getBalances, getTicker, getTickersBatch, getOHLCV, createOrder, testConnection, getExchangeForUser, getTopPairs, getFirstBinanceBalance, resaveApiKey, SUPPORTED_EXCHANGES };
+module.exports = { getBalances, getTicker, getOHLCV, createOrder, testConnection, getExchangeForUser, getTopPairs, getFirstBinanceBalance, resaveApiKey, SUPPORTED_EXCHANGES };

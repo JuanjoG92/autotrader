@@ -4,7 +4,7 @@
 
 const { getDB }          = require('../models/db');
 const { getOpenAIToken } = require('./ai-token');
-const { getBalances, getTicker, getTickersBatch, getTopPairs, createOrder, getExchangeForUser } = require('./binance');
+const { getBalances, getTicker, getTopPairs, createOrder, getExchangeForUser } = require('./binance');
 const news               = require('./news-fetcher');
 const rag                = require('./rag');
 
@@ -68,14 +68,6 @@ function getPositionHistory(limit) {
 // ── Datos de mercado ──────────────────────────────────────────────────────────
 
 async function getMarketData() {
-  // ONE batch call instead of 10 sequential calls (10x faster)
-  const batchTickers = await getTickersBatch(TOP_CRYPTOS);
-  if (batchTickers && Object.keys(batchTickers).length > 0) {
-    return Object.values(batchTickers).map(t =>
-      `${t.symbol}: $${t.last.toFixed(2)} | 24h: ${t.percentage >= 0 ? '+' : ''}${t.percentage.toFixed(1)}% | Vol: $${Math.round(t.quoteVolume / 1e6)}M`
-    ).join('\n');
-  }
-  // Fallback: individual calls (slower)
   const rows = [];
   for (const pair of TOP_CRYPTOS) {
     try {
@@ -84,6 +76,7 @@ async function getMarketData() {
         rows.push(`${pair}: $${t.last.toFixed(2)} | 24h: ${t.percentage >= 0 ? '+' : ''}${t.percentage.toFixed(1)}% | Vol: $${Math.round(t.quoteVolume / 1e6)}M`);
       }
     } catch {}
+    await new Promise(r => setTimeout(r, 300)); // rate limit CoinGecko
   }
   return rows.join('\n') || 'Sin datos de mercado.';
 }
@@ -149,46 +142,40 @@ async function runAnalysis() {
   const apiKey = await getOpenAIToken();
   if (!apiKey) { console.warn('[Crypto] Sin token OpenAI'); return null; }
 
-  const t0 = Date.now();
   console.log('[Crypto] Iniciando análisis...');
 
-  // Posiciones (DB, instant)
-  const positions = getOpenPositions();
-  const posCtx = positions.length
-    ? positions.map(p => `${p.symbol}: ${p.quantity} @ $${p.entry_price} (SL:$${p.stop_loss} TP:$${p.take_profit})`).join('\n')
-    : 'Sin posiciones abiertas.';
+  // Datos de mercado
+  const marketCtx = await getMarketData();
 
-  // Noticias (DB, instant)
+  // Noticias crypto
   const cryptoTickers = ['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'CRYPTO'];
   const newsItems = news.getNewsForTickers(cryptoTickers, 15);
   const newsCtx = newsItems.length
     ? newsItems.map(n => `[${n.source}] ${n.title}`).join('\n')
     : 'Sin noticias crypto recientes.';
 
-  // PARALLEL: market data + balance + RAG (all network calls at once)
-  const [marketCtx, balResult, ragCtx] = await Promise.all([
-    getMarketData(),
-    (async () => {
-      try {
-        const keyInfo = _getApiKeyInfo(cfg);
-        if (keyInfo) return await getBalances(keyInfo.user_id, keyInfo.id);
-      } catch {}
-      return null;
-    })(),
-    rag.buildRAGContext('bitcoin ethereum crypto trading strategy risk').catch(() => ''),
-  ]);
+  // RAG
+  const ragCtx = await rag.buildRAGContext('bitcoin ethereum crypto trading strategy risk');
 
-  console.log(`[Crypto] Datos en ${Date.now() - t0}ms`);
+  // Posiciones abiertas
+  const positions = getOpenPositions();
+  const posCtx = positions.length
+    ? positions.map(p => `${p.symbol}: ${p.quantity} @ $${p.entry_price} (SL:$${p.stop_loss} TP:$${p.take_profit})`).join('\n')
+    : 'Sin posiciones abiertas.';
 
-  // Balance
+  // Balance real
   let balanceCtx = 'USDT libre: $0 (sin conexión)';
   let availableUSDT = 0;
-  if (balResult) {
-    availableUSDT = balResult.USDT?.free || 0;
-    const entries = Object.entries(balResult).filter(([k, v]) => v.total > 0 && k !== 'USDT').slice(0, 5);
-    balanceCtx = `USDT libre: $${availableUSDT.toFixed(2)}`;
-    if (entries.length) balanceCtx += ' | ' + entries.map(([k, v]) => `${k}: ${v.total}`).join(', ');
-  }
+  try {
+    const keyInfo = _getApiKeyInfo(cfg);
+    if (keyInfo) {
+      const bal = await getBalances(keyInfo.user_id, keyInfo.id);
+      availableUSDT = bal.USDT?.free || 0;
+      const entries = Object.entries(bal).filter(([k, v]) => v.total > 0 && k !== 'USDT').slice(0, 5);
+      balanceCtx = `USDT libre: $${availableUSDT.toFixed(2)}`;
+      if (entries.length) balanceCtx += ' | ' + entries.map(([k, v]) => `${k}: ${v.total}`).join(', ');
+    }
+  } catch { /* usar balance paper */ }
 
   // Smart position sizing: 15-25% of available capital per trade, min $5
   const positionSize = Math.max(5, Math.min(availableUSDT * 0.20, availableUSDT - 2));
@@ -356,28 +343,16 @@ async function _executeSellPosition(cfg, pos, reason) {
     const pnl = (price - pos.entry_price) * pos.quantity;
 
     const keyInfo = _getApiKeyInfo(cfg);
-    let sold = false;
     if (keyInfo) {
-      try {
-        await createOrder(keyInfo.user_id, keyInfo.id, pos.symbol, 'sell', pos.quantity);
-        sold = true;
-      } catch (sellErr) {
-        // If insufficient balance, close position anyway (quantity mismatch)
-        const msg = sellErr.message || '';
-        if (msg.includes('insufficient') || msg.includes('balance')) {
-          console.warn(`[Crypto] Sell failed (${msg.substring(0, 60)}) — closing position as error`);
-        } else {
-          throw sellErr;
-        }
-      }
+      await createOrder(keyInfo.user_id, keyInfo.id, pos.symbol, 'sell', pos.quantity);
     }
 
-    closePosition(pos.id, sold ? pnl : 0, sold ? reason : `Error venta: ${reason}`);
-    console.log(`[Crypto] ${sold ? '💰' : '⚠️'} SELL ${pos.symbol} x${pos.quantity} @ $${price} | PnL: $${(sold ? pnl : 0).toFixed(2)} | ${reason}`);
+    closePosition(pos.id, pnl, reason);
+    console.log(`[Crypto] 💰 SELL ${pos.symbol} x${pos.quantity} @ $${price} | PnL: $${pnl.toFixed(2)} | ${reason}`);
 
     if (_broadcastFn) _broadcastFn({
       type: 'crypto_sell', symbol: pos.symbol, quantity: pos.quantity,
-      entry: pos.entry_price, exit: price, pnl: sold ? pnl : 0, reason,
+      entry: pos.entry_price, exit: price, pnl, reason,
       timestamp: new Date().toISOString(),
     });
   } catch (e) {
