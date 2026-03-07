@@ -18,6 +18,7 @@ const TOP_CRYPTOS = [
 let _timer = null;
 let _monitorTimer = null;
 let _broadcastFn = null;
+let _lastAnalysis = null; // Last AI analysis for dashboard
 
 // ── Config DB ─────────────────────────────────────────────────────────────────
 
@@ -162,51 +163,60 @@ async function runAnalysis() {
     ? positions.map(p => `${p.symbol}: ${p.quantity} @ $${p.entry_price} (SL:$${p.stop_loss} TP:$${p.take_profit})`).join('\n')
     : 'Sin posiciones abiertas.';
 
-  // Balance (intentar Binance, sino simular)
-  let balanceCtx = `USDT libre: $${cfg.max_per_trade_usd * 10} (paper trading)`;
+  // Balance real
+  let balanceCtx = 'USDT libre: $0 (sin conexión)';
+  let availableUSDT = 0;
   try {
     const keyInfo = _getApiKeyInfo(cfg);
     if (keyInfo) {
       const bal = await getBalances(keyInfo.user_id, keyInfo.id);
-      const usdtBal = bal.USDT?.free || 0;
+      availableUSDT = bal.USDT?.free || 0;
       const entries = Object.entries(bal).filter(([k, v]) => v.total > 0 && k !== 'USDT').slice(0, 5);
-      balanceCtx = `USDT libre: $${usdtBal.toFixed(2)}`;
+      balanceCtx = `USDT libre: $${availableUSDT.toFixed(2)}`;
       if (entries.length) balanceCtx += ' | ' + entries.map(([k, v]) => `${k}: ${v.total}`).join(', ');
     }
   } catch { /* usar balance paper */ }
 
-  const prompt = `ANÁLISIS CRYPTO TRADING — Binance Spot 24/7
+  // Smart position sizing: 15-25% of available capital per trade, min $5
+  const positionSize = Math.max(5, Math.min(availableUSDT * 0.20, availableUSDT - 2));
+
+  const prompt = `ANÁLISIS CRYPTO TRADING PROFESIONAL — Binance Spot 24/7
+
+Eres un trader institucional de Wall Street. Tu objetivo: maximizar retornos con gestión de riesgo profesional.
 
 MERCADO CRYPTO ACTUAL:
 ${marketCtx}
 
-BALANCE: ${balanceCtx}
-MAX POR OPERACIÓN: $${cfg.max_per_trade_usd} USD | RIESGO: ${cfg.risk_level}
-STOP-LOSS: ${cfg.stop_loss_pct}% | TAKE-PROFIT: ${cfg.take_profit_pct}%
+BALANCE REAL: ${balanceCtx}
+CAPITAL DISPONIBLE POR OPERACIÓN: ~$${positionSize.toFixed(0)} USD (20% del capital libre)
+RIESGO: ${cfg.risk_level} | STOP-LOSS: ${cfg.stop_loss_pct}% | TAKE-PROFIT: ${cfg.take_profit_pct}%
 
 POSICIONES ABIERTAS:
 ${posCtx}
 
-NOTICIAS CRYPTO:
+NOTICIAS CRYPTO RECIENTES:
 ${newsCtx}
-${ragCtx ? `\nCONTEXTO ADICIONAL:\n${ragCtx}` : ''}
+${ragCtx ? `\nCONTEXTO ESTRATÉGICO:\n${ragCtx}` : ''}
 
-REGLAS:
-1. DEBES generar entre 1 y 3 señales SIEMPRE — nunca 0 señales
-2. Solo pares /USDT en Binance Spot: BTC, ETH, BNB, SOL, XRP, ADA, DOGE, AVAX, LINK, DOT
-3. Ser inteligente: comprar en caídas con fundamentos, vender en picos
-4. Si hay posiciones abiertas que deberían cerrarse, señalar SELL
-5. Confidence entre 0.65 y 0.95
-6. Considerar tendencia 24h, volumen, noticias
+REGLAS DE TRADING PROFESIONAL:
+1. COMISIÓN Binance: 0.1% por operación (compra + venta = 0.2% round-trip). Solo operar si el movimiento esperado supera 0.5% mínimo
+2. NO hacer overtrading: solo operar con señales CLARAS y fundamentos sólidos
+3. Si no hay oportunidad clara, generar señales HOLD con razón
+4. Position sizing: respetar el capital disponible, nunca usar más del 25% en una sola operación
+5. Solo pares /USDT en Binance Spot: BTC, ETH, BNB, SOL, XRP, ADA, DOGE, AVAX, LINK, DOT
+6. Comprar en caídas con fundamentos, vender en picos o cuando el momentum se agota
 7. No comprar lo que ya tenemos abierto
-8. En mercado bajista: buscar oportunidades de compra en sobreventa
-9. En mercado alcista: tomar ganancias parciales
+8. SELL si una posición abierta muestra debilidad técnica o fundamentales negativos
+9. Confidence: 0.60-0.95 (BUY/SELL solo si > 0.75)
+10. Considerar: tendencia 24h, volumen vs promedio, noticias, correlación BTC
+11. En cada señal incluir "amount_usd" con el monto sugerido en USD
 
 RESPONDE SOLO JSON:
 {
-  "signals": [{"symbol":"BTC/USDT","action":"BUY","confidence":0.82,"reason":"Tendencia alcista + volumen creciente"}],
-  "analysis": "Resumen ejecutivo breve",
-  "market_sentiment": "BULLISH|BEARISH|NEUTRAL"
+  "signals": [{"symbol":"BTC/USDT","action":"BUY|SELL|HOLD","confidence":0.82,"amount_usd":10,"reason":"Razón detallada"}],
+  "analysis": "Resumen ejecutivo: qué está pasando en el mercado y por qué estas decisiones",
+  "market_sentiment": "BULLISH|BEARISH|NEUTRAL",
+  "watchlist": ["ETH/USDT","SOL/USDT"]
 }`;
 
   try {
@@ -227,9 +237,13 @@ RESPONDE SOLO JSON:
 
     console.log(`[Crypto] ${(result.signals||[]).length} señales | ${result.market_sentiment} | ${result.analysis?.substring(0, 80)}`);
 
+    // Save analysis for dashboard
+    _lastAnalysis = { ...result, timestamp: new Date().toISOString() };
+
     // Ejecutar señales
     for (const sig of (result.signals || [])) {
       if (!sig.symbol || (sig.confidence || 0) < cfg.min_confidence) continue;
+      if (sig.action === 'HOLD') continue; // HOLD = just watching
 
       // No comprar si ya tenemos posición abierta
       if (sig.action === 'BUY' && positions.some(p => p.symbol === sig.symbol)) {
@@ -237,9 +251,16 @@ RESPONDE SOLO JSON:
         continue;
       }
 
+      // Smart amount: use AI suggested amount or 20% of available capital
+      const tradeAmount = Math.min(sig.amount_usd || positionSize, availableUSDT - 2);
+      if (sig.action === 'BUY' && tradeAmount < 5) {
+        console.log(`[Crypto] Skip ${sig.symbol} — saldo insuficiente ($${availableUSDT.toFixed(2)})`);
+        continue;
+      }
+
       try {
         if (sig.action === 'BUY') {
-          const { order, price, quantity } = await _executeTrade(cfg, sig.symbol, 'buy', cfg.max_per_trade_usd);
+          const { order, price, quantity } = await _executeTrade(cfg, sig.symbol, 'buy', tradeAmount);
           const sl = Math.round(price * (1 - cfg.stop_loss_pct / 100) * 100) / 100;
           const tp = Math.round(price * (1 + cfg.take_profit_pct / 100) * 100) / 100;
           savePosition({
@@ -377,10 +398,15 @@ function getStatus() {
       pnlPct: p.current_price ? (((p.current_price - p.entry_price) / p.entry_price) * 100).toFixed(1) + '%' : 'N/A',
     })),
     config: { max_usd: cfg.max_per_trade_usd, risk: cfg.risk_level, sl: cfg.stop_loss_pct, tp: cfg.take_profit_pct },
+    lastAnalysis: _lastAnalysis,
   };
+}
+
+function getLastAnalysis() {
+  return _lastAnalysis;
 }
 
 module.exports = {
   init, getConfig, updateConfig, runAnalysis, monitorPositions,
-  getStatus, getOpenPositions, getPositionHistory,
+  getStatus, getOpenPositions, getPositionHistory, getLastAnalysis,
 };

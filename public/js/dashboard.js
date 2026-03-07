@@ -69,6 +69,31 @@
       } else {
         posCard.style.display = 'none';
       }
+
+      // AI Analysis section
+      const la = s.lastAnalysis;
+      if (la) {
+        const txt = document.getElementById('aiAnalysisText');
+        txt.textContent = la.analysis || 'Sin análisis';
+        const badge = document.getElementById('aiSentimentBadge');
+        const sent = la.market_sentiment || 'NEUTRAL';
+        badge.textContent = sent;
+        badge.style.background = sent === 'BULLISH' ? 'rgba(16,185,129,.15)' : sent === 'BEARISH' ? 'rgba(239,68,68,.15)' : 'rgba(245,158,11,.15)';
+        badge.style.color = sent === 'BULLISH' ? '#10b981' : sent === 'BEARISH' ? '#ef4444' : '#f59e0b';
+        const sigList = document.getElementById('aiSignalsList');
+        sigList.innerHTML = (la.signals || []).map(sig => {
+          const color = sig.action === 'BUY' ? '#10b981' : sig.action === 'SELL' ? '#ef4444' : '#64748b';
+          const bg = sig.action === 'BUY' ? 'rgba(16,185,129,.08)' : sig.action === 'SELL' ? 'rgba(239,68,68,.08)' : 'rgba(100,116,139,.06)';
+          return `<div style="padding:6px 10px;border-radius:6px;margin-bottom:4px;background:${bg};border-left:3px solid ${color};font-size:12px">
+            <strong style="color:${color}">${sig.action}</strong> ${sig.symbol}
+            <span style="color:#64748b;margin-left:6px">${((sig.confidence||0)*100).toFixed(0)}%</span>
+            ${sig.amount_usd ? '<span style="color:#94a3b8;margin-left:4px">~$'+sig.amount_usd+'</span>' : ''}
+            <div style="color:#94a3b8;font-size:11px;margin-top:2px">${(sig.reason||'').substring(0,120)}</div>
+          </div>`;
+        }).join('');
+        const wl = document.getElementById('aiWatchlist');
+        wl.textContent = la.watchlist?.length ? '👀 Watchlist: ' + la.watchlist.join(', ') : '';
+      }
     }).catch(() => {});
 
     apiFetch('/crypto/summary').then(s => {
