@@ -19,6 +19,8 @@ const marketMonitor= require('./src/services/market-monitor');
 const aiTrader     = require('./src/services/ai-trader');
 const newsFetcher  = require('./src/services/news-fetcher');
 const autoInvestor = require('./src/services/auto-investor');
+const cryptoTrader = require('./src/services/crypto-trader');
+const cryptoRoutes = require('./src/routes/crypto');
 
 const app = express();
 const server = http.createServer(app);
@@ -38,16 +40,19 @@ app.use('/api/webhook', webhookRoutes);
 app.use('/api/cocos',   cocosRoutes);
 app.use('/api/ai',      aiRoutes);
 app.use('/api/rag',     ragRoutes);
+app.use('/api/crypto',  cryptoRoutes);
 
 // ── Health check (sin auth — para PM2 / monitoreo) ──
 app.get('/api/health', (req, res) => {
   const health = cocos.getHealth ? cocos.getHealth() : { ready: cocos.isReady() };
+  const cryptoStatus = cryptoTrader.getStatus ? cryptoTrader.getStatus() : {};
   const status = health.ready ? 'ok' : 'degraded';
   res.status(health.ready ? 200 : 503).json({
     status,
     uptime: Math.round(process.uptime()) + 's',
     memory: Math.round(process.memoryUsage().rss / 1024 / 1024) + ' MB',
     cocos: health,
+    crypto: cryptoStatus,
     timestamp: new Date().toISOString(),
   });
 });
@@ -90,6 +95,7 @@ marketMonitor.init(broadcast);
 aiTrader.init(broadcast);
 newsFetcher.init();
 autoInvestor.init(broadcast);
+cryptoTrader.init(broadcast);
 
 server.listen(PORT, () => {
   console.log(`AutoTrader running on port ${PORT}`);

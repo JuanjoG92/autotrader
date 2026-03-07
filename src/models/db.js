@@ -208,6 +208,38 @@ function initDB() {
     );
     CREATE INDEX IF NOT EXISTS idx_auto_inv_ticker ON auto_investments(ticker);
     CREATE INDEX IF NOT EXISTS idx_auto_inv_status ON auto_investments(status);
+
+    -- ── Crypto AI Trader (Binance — separado de Cocos) ──
+    CREATE TABLE IF NOT EXISTS crypto_config (
+      id INTEGER PRIMARY KEY DEFAULT 1,
+      enabled INTEGER DEFAULT 0,
+      api_key_id INTEGER DEFAULT 0,
+      max_per_trade_usd REAL DEFAULT 50,
+      min_confidence REAL DEFAULT 0.75,
+      risk_level TEXT DEFAULT 'medium',
+      stop_loss_pct REAL DEFAULT 3.0,
+      take_profit_pct REAL DEFAULT 6.0,
+      analysis_interval_min INTEGER DEFAULT 3,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS crypto_positions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      symbol TEXT NOT NULL,
+      side TEXT NOT NULL,
+      quantity REAL NOT NULL DEFAULT 0,
+      entry_price REAL NOT NULL DEFAULT 0,
+      current_price REAL DEFAULT 0,
+      stop_loss REAL DEFAULT 0,
+      take_profit REAL DEFAULT 0,
+      status TEXT DEFAULT 'OPEN',
+      order_id TEXT DEFAULT '',
+      reason TEXT DEFAULT '',
+      pnl REAL DEFAULT 0,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      closed_at DATETIME DEFAULT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_crypto_pos_status ON crypto_positions(status);
   `);
 
   console.log('Database initialized');

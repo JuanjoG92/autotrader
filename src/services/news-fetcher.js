@@ -17,6 +17,9 @@ const RSS_FEEDS = [
   { name: 'Google Wall Street',  url: 'https://news.google.com/rss/search?q=wall+street+S%26P500+nasdaq+stock+market+today&hl=en-US&gl=US&ceid=US:en' },
   { name: 'Google AI Stocks',    url: 'https://news.google.com/rss/search?q=artificial+intelligence+stocks+NVDA+SMCI+PLTR&hl=en-US&gl=US&ceid=US:en' },
   { name: 'Bolsar',              url: 'https://www.bolsar.com/Vistas/Publicas/RSSNoticias.aspx' },
+  // ── Crypto ──
+  { name: 'Google Bitcoin',      url: 'https://news.google.com/rss/search?q=bitcoin+BTC+cryptocurrency+price&hl=en-US&gl=US&ceid=US:en' },
+  { name: 'Google Ethereum DeFi',url: 'https://news.google.com/rss/search?q=ethereum+solana+crypto+defi+altcoin&hl=en-US&gl=US&ceid=US:en' },
 ];
 
 // Palabras clave por sector/ticker para indexar noticias
@@ -61,6 +64,17 @@ const SECTOR_KEYWORDS = {
   BA:     ['boeing', 'aircraft', 'aviation'],
   BABA:   ['alibaba', 'china ecommerce'],
   GLOB:   ['globant', 'tech argentina', 'software argentina'],
+  // Crypto
+  BTC:    ['bitcoin', 'btc', 'satoshi', 'halving'],
+  ETH:    ['ethereum', 'eth', 'vitalik', 'smart contract'],
+  SOL:    ['solana', 'sol'],
+  BNB:    ['binance coin', 'bnb'],
+  XRP:    ['ripple', 'xrp'],
+  ADA:    ['cardano', 'ada'],
+  DOGE:   ['dogecoin', 'doge', 'elon musk crypto'],
+  AVAX:   ['avalanche', 'avax'],
+  LINK:   ['chainlink', 'link oracle'],
+  CRYPTO: ['crypto', 'cryptocurrency', 'defi', 'blockchain', 'web3', 'nft', 'stablecoin', 'sec crypto', 'etf bitcoin'],
   GENERAL: ['merval', 'byma', 'bolsa', 'cedear', 'dolar', 'inflacion', 'economia argentina', 'reservas', 'bcra', 'banco central', 'wall street', 'fed', 'interest rate', 'stock market'],
 };
 
