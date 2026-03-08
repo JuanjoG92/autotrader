@@ -235,14 +235,15 @@ async function _executeTrade(cfg, symbol, side, quantityUSD) {
           await new Promise(r => setTimeout(r, 2000));
           continue;
         }
-        console.warn(`[Crypto] Binance orden falló (${msg.substring(0, 80)}) — paper mode`);
-        break;
+        console.warn(`[Crypto] Binance orden falló (${msg.substring(0, 80)})`);
+        // NO crear posición PAPER — si Binance rechaza, no guardar nada
+        throw new Error(`Orden rechazada: ${msg.substring(0, 60)}`);
       }
     }
   }
 
   console.log(`[Crypto] ${mode} ${side} ${symbol}: ${quantity} @ $${fillPrice} (~$${(quantity * fillPrice).toFixed(2)})`);
-  return { order: order || { id: 'PAPER-' + Date.now() }, price: fillPrice, quantity, mode };
+  return { order: order || { id: 'LIVE-' + Date.now() }, price: fillPrice, quantity, mode };
 }
 
 // ── AI Análisis ───────────────────────────────────────────────────────────────
@@ -315,6 +316,10 @@ async function runAnalysis() {
     const entries = Object.entries(balanceResult).filter(([k, v]) => v.total > 0 && k !== 'USDT').slice(0, 5);
     balanceCtx = `USDT libre: $${availableUSDT.toFixed(2)}`;
     if (entries.length) balanceCtx += ' | ' + entries.map(([k, v]) => `${k}: ${v.total}`).join(', ');
+    // Log detallado del balance para debug
+    console.log(`[Crypto] 💰 Balance Binance: USDT=$${availableUSDT.toFixed(2)} | ${entries.map(([k, v]) => `${k}=${v.total}`).join(', ') || 'sin otros activos'}`);
+  } else {
+    console.warn('[Crypto] ⚠️ No se pudo leer balance de Binance');
   }
 
   const positionSize = Math.max(5, Math.min(availableUSDT * 0.20, availableUSDT - 2));
