@@ -57,14 +57,14 @@ function getOpenPositions() {
   return getDB().prepare("SELECT * FROM crypto_positions WHERE status = 'OPEN' ORDER BY created_at DESC").all();
 }
 
-function closePosition(id, pnl, reason) {
+function closePosition(id, pnl, reason, sellPrice, fees) {
   getDB().prepare(
-    "UPDATE crypto_positions SET status = 'CLOSED', pnl = ?, reason = reason || ' | ' || ?, closed_at = CURRENT_TIMESTAMP WHERE id = ?"
-  ).run(typeof pnl === 'number' ? pnl : 0, reason || 'Cerrada', id);
+    "UPDATE crypto_positions SET status = 'CLOSED', pnl = ?, sell_price = ?, fees = ?, reason = reason || ' | ' || ?, closed_at = CURRENT_TIMESTAMP WHERE id = ?"
+  ).run(typeof pnl === 'number' ? pnl : 0, sellPrice || 0, fees || 0, reason || 'Cerrada', id);
 }
 
 function getPositionHistory(limit) {
-  return getDB().prepare('SELECT * FROM crypto_positions ORDER BY created_at DESC LIMIT ?').all(limit || 30);
+  return getDB().prepare("SELECT * FROM crypto_positions WHERE order_id NOT LIKE 'PAPER%' ORDER BY created_at DESC LIMIT ?").all(limit || 30);
 }
 
 // ── Datos de mercado (dinámico: base coins + top gainers 24h) ───────────
@@ -165,6 +165,7 @@ function _getApiKeyInfo(cfg) {
 
 async function _executeTrade(cfg, symbol, side, quantityUSD) {
   const keyInfo = _getApiKeyInfo(cfg);
+  if (!keyInfo) throw new Error('Sin API key de Binance configurada — no se opera en PAPER');
 
   // 1. Cargar filtros REALES de Binance (LOT_SIZE, MIN_NOTIONAL)
   let market = null;
@@ -172,13 +173,11 @@ async function _executeTrade(cfg, symbol, side, quantityUSD) {
 
   // 2. Obtener precio FRESCO justo ahora
   let price = 0;
-  if (keyInfo) {
-    try {
-      const exchange = getExchangeForUser(keyInfo.user_id, keyInfo.id);
-      const ticker = await exchange.fetchTicker(symbol);
-      price = ticker?.last || ticker?.close || 0;
-    } catch {}
-  }
+  try {
+    const exchange = getExchangeForUser(keyInfo.user_id, keyInfo.id);
+    const ticker = await exchange.fetchTicker(symbol);
+    price = ticker?.last || ticker?.close || 0;
+  } catch {}
   if (price <= 0) {
     try { const t = await getTicker(symbol); price = t?.last || 0; } catch {}
   }
@@ -197,7 +196,6 @@ async function _executeTrade(cfg, symbol, side, quantityUSD) {
     }
     if (quantity < minAmount) quantity = minAmount;
   } else {
-    // Fallback: adivinar decimales (sin info de mercado)
     let decimalPlaces;
     if (price >= 10000) decimalPlaces = 5;
     else if (price >= 100) decimalPlaces = 4;
@@ -211,48 +209,50 @@ async function _executeTrade(cfg, symbol, side, quantityUSD) {
   }
   if (quantity <= 0) throw new Error(`Cantidad muy baja para ${symbol}`);
 
-  // 4. Ejecutar en Binance (MARKET order)
+  // 4. Ejecutar en Binance (MARKET order) — SOLO LIVE, nunca PAPER
   let order = null;
-  let mode = 'PAPER';
   let fillPrice = price;
+  let fillQuantity = quantity;
 
-  if (keyInfo) {
-    for (let attempt = 1; attempt <= 2; attempt++) {
-      try {
-        order = await createOrder(keyInfo.user_id, keyInfo.id, symbol, side.toLowerCase(), quantity);
-        mode = 'LIVE';
-        if (order?.average) fillPrice = order.average;
-        else if (order?.price && order.price > 0) fillPrice = order.price;
-        break;
-      } catch (e) {
-        const msg = e.message || '';
-        if (msg.includes('NOTIONAL') && attempt === 1) {
-          console.warn(`[Crypto] ${symbol} NOTIONAL — subiendo cantidad`);
-          quantity = market
-            ? formatAmount(symbol, (actualUSD * 2) / price)
-            : parseFloat(((actualUSD * 2) / price).toFixed(2));
-          continue;
-        }
-        if (msg.includes('LOT_SIZE') && attempt === 1) {
-          console.warn(`[Crypto] ${symbol} LOT_SIZE — ajustando con floor`);
-          quantity = market
-            ? formatAmount(symbol, Math.floor(actualUSD / price))
-            : Math.max(1, Math.floor(actualUSD / price));
-          continue;
-        }
-        if (attempt < 2 && (msg.includes('timed out') || msg.includes('ETIMEDOUT') || msg.includes('ECONNRESET'))) {
-          console.warn(`[Crypto] Orden timeout intento ${attempt}, reintentando...`);
-          await new Promise(r => setTimeout(r, 2000));
-          continue;
-        }
-        console.warn(`[Crypto] Binance orden falló (${msg.substring(0, 80)})`);
-        throw new Error(`Orden rechazada: ${msg.substring(0, 60)}`);
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      order = await createOrder(keyInfo.user_id, keyInfo.id, symbol, side.toLowerCase(), quantity);
+      // Usar datos REALES de Binance: precio y cantidad ejecutada
+      if (order?.average) fillPrice = order.average;
+      else if (order?.price && order.price > 0) fillPrice = order.price;
+      if (order?.filled && order.filled > 0) fillQuantity = order.filled;
+      else if (order?.amount && order.amount > 0) fillQuantity = order.amount;
+      break;
+    } catch (e) {
+      const msg = e.message || '';
+      if (msg.includes('NOTIONAL') && attempt === 1) {
+        console.warn(`[Crypto] ${symbol} NOTIONAL — subiendo cantidad`);
+        quantity = market
+          ? formatAmount(symbol, (actualUSD * 2) / price)
+          : parseFloat(((actualUSD * 2) / price).toFixed(2));
+        continue;
       }
+      if (msg.includes('LOT_SIZE') && attempt === 1) {
+        console.warn(`[Crypto] ${symbol} LOT_SIZE — ajustando con floor`);
+        quantity = market
+          ? formatAmount(symbol, Math.floor(actualUSD / price))
+          : Math.max(1, Math.floor(actualUSD / price));
+        continue;
+      }
+      if (attempt < 2 && (msg.includes('timed out') || msg.includes('ETIMEDOUT') || msg.includes('ECONNRESET'))) {
+        console.warn(`[Crypto] Orden timeout intento ${attempt}, reintentando...`);
+        await new Promise(r => setTimeout(r, 2000));
+        continue;
+      }
+      console.warn(`[Crypto] Binance orden falló (${msg.substring(0, 80)})`);
+      throw new Error(`Orden rechazada: ${msg.substring(0, 60)}`);
     }
   }
 
-  console.log(`[Crypto] ${mode} ${side} ${symbol}: ${quantity} @ $${fillPrice} (~$${(quantity * fillPrice).toFixed(2)})`);
-  return { order: order || { id: 'LIVE-' + Date.now() }, price: fillPrice, quantity, mode };
+  if (!order) throw new Error(`Orden no ejecutada para ${symbol}`);
+
+  console.log(`[Crypto] LIVE ${side} ${symbol}: ${fillQuantity} @ $${fillPrice} (~$${(fillQuantity * fillPrice).toFixed(2)})`);
+  return { order, price: fillPrice, quantity: fillQuantity };
 }
 
 // ── AI Análisis ───────────────────────────────────────────────────────────────
@@ -341,8 +341,9 @@ async function runAnalysis() {
     console.warn('[Crypto] ⚠️ No se pudo leer balance de Binance');
   }
 
-  // Invertir 50% del portfolio TOTAL en cada top gainer (2 posiciones = 100%)
-  const positionSize = Math.max(8, Math.floor(totalPortfolio * 0.50));
+  // Invertir 50% del USDT disponible en cada top gainer (2 posiciones = 100%)
+  // Usar availableUSDT (lo que realmente podemos gastar), no totalPortfolio
+  const positionSize = Math.max(10, Math.floor(availableUSDT * 0.50));
 
   // Prompt: invertir en top gainers, PROHIBIDO vender para rotar
   const prompt = `CRYPTO TRADER — Binance Spot — REGLAS ESTRICTAS
@@ -429,21 +430,21 @@ JSON:
         continue;
       }
 
-      // Cooldown: no recomprar inmediatamente tras vender (evita loop)
+      // Cooldown: no recomprar inmediatamente tras vender (evita loop de pérdidas)
       const recent = getDB().prepare(
         "SELECT closed_at FROM crypto_positions WHERE symbol = ? AND status = 'CLOSED' ORDER BY id DESC LIMIT 1"
       ).get(sig.symbol);
       if (recent && recent.closed_at) {
         const closedAgo = Date.now() - new Date(recent.closed_at + 'Z').getTime();
-        if (closedAgo < 3 * 60 * 1000) {
-          console.log(`[Crypto] Skip ${sig.symbol} — vendido hace ${Math.round(closedAgo / 60000)} min (cooldown 3min)`);
+        if (closedAgo < 30 * 60 * 1000) {
+          console.log(`[Crypto] Skip ${sig.symbol} — vendido hace ${Math.round(closedAgo / 60000)} min (cooldown 30min)`);
           continue;
         }
       }
 
-      const tradeAmount = Math.max(8, Math.min(sig.amount_usd || positionSize, availableUSDT - 2));
-      if (availableUSDT < 6) {
-        console.log(`[Crypto] Skip ${sig.symbol} — USDT libre: $${availableUSDT.toFixed(2)} (necesita >$6)`);
+      const tradeAmount = Math.max(10, Math.min(sig.amount_usd || positionSize, availableUSDT - 2));
+      if (availableUSDT < 10) {
+        console.log(`[Crypto] Skip ${sig.symbol} — USDT libre: $${availableUSDT.toFixed(2)} (necesita >$10)`);
         continue;
       }
 
@@ -483,9 +484,9 @@ async function monitorPositions() {
 
   for (const pos of positions) {
     try {
-      // Skip positions younger than 2 minutes (dejar que se procese la orden)
+      // Skip positions younger than 30 seconds (dejar que se procese la orden)
       const posAge = Date.now() - new Date(pos.created_at + 'Z').getTime();
-      if (posAge < 2 * 60 * 1000) continue;
+      if (posAge < 30 * 1000) continue;
 
       const ticker = await getTicker(pos.symbol);
       const price = ticker?.last || 0;
@@ -527,7 +528,9 @@ async function monitorPositions() {
       }
 
       await new Promise(r => setTimeout(r, 300));
-    } catch {}
+    } catch (e) {
+      console.warn(`[Crypto] Monitor error ${pos.symbol}: ${(e.message || '').substring(0, 60)}`);
+    }
   }
 }
 
@@ -592,11 +595,15 @@ async function _executeSellPosition(cfg, pos, reason) {
     const grossPnl = (sellPrice - pos.entry_price) * pos.quantity;
     const buyFee = pos.entry_price * pos.quantity * 0.001;
     const sellFee = sold ? sellPrice * pos.quantity * 0.001 : 0;
-    const netPnl = grossPnl - buyFee - sellFee;
+    const totalFees = buyFee + sellFee;
+    const netPnl = grossPnl - totalFees;
+
+    // Actualizar current_price con el precio real de venta
+    getDB().prepare('UPDATE crypto_positions SET current_price = ? WHERE id = ?').run(sellPrice, pos.id);
 
     // Siempre registrar PnL real (incluso si la venta falló)
-    closePosition(pos.id, netPnl, sold ? reason : `Cerrada sin venta (${reason})`);
-    console.log(`[Crypto] ${sold ? '💰' : '📝'} SELL ${pos.symbol} x${pos.quantity} @ $${sellPrice} | PnL: $${netPnl.toFixed(2)} (fees: -$${(buyFee + sellFee).toFixed(2)}) | ${reason}`);
+    closePosition(pos.id, netPnl, sold ? reason : `Cerrada sin venta (${reason})`, sellPrice, totalFees);
+    console.log(`[Crypto] ${sold ? '💰' : '📝'} SELL ${pos.symbol} x${pos.quantity} @ $${sellPrice} | PnL: $${netPnl.toFixed(2)} (fees: -$${totalFees.toFixed(2)}) | ${reason}`);
 
     if (_broadcastFn) _broadcastFn({
       type: 'crypto_sell', symbol: pos.symbol, quantity: pos.quantity,
@@ -640,7 +647,7 @@ async function sniperNewListings() {
 
       const tradeAmount = Math.min(cfg.max_per_trade_usd || 10, 10); // Max $10 en listings nuevos
       try {
-        const { order, price, quantity, mode } = await _executeTrade(cfg, listing.symbol, 'buy', tradeAmount);
+        const { order, price, quantity } = await _executeTrade(cfg, listing.symbol, 'buy', tradeAmount);
         // SL más ajustado (nuevo listing = volatilidad extrema)
         const sl = Math.round(price * 0.90 * 10000) / 10000;   // -10% SL (protección de caída)
         const tp = Math.round(price * 1.50 * 10000) / 10000;   // +50% TP (criptos nuevas suben fuerte)
@@ -649,7 +656,7 @@ async function sniperNewListings() {
           stop_loss: sl, take_profit: tp, status: 'OPEN',
           order_id: order?.id || '', reason: `🚀 NUEVO LISTING detectado — compra automática sniper`,
         });
-        console.log(`[Crypto] 🚀 ${mode} BUY ${listing.symbol}: ${quantity} @ $${price} | SL:$${sl} TP:$${tp}`);
+        console.log(`[Crypto] 🚀 LIVE BUY ${listing.symbol}: ${quantity} @ $${price} | SL:$${sl} TP:$${tp}`);
       } catch (e) {
         console.error(`[Crypto] 🚀 Error sniper ${listing.symbol}:`, e.message);
       }
@@ -695,12 +702,12 @@ function init(broadcastFn) {
 
 function getStatus() {
   const cfg = getConfig();
-  const positions = getOpenPositions();
+  // Excluir posiciones PAPER del status
+  const positions = getOpenPositions().filter(p => !p.order_id || !p.order_id.startsWith('PAPER'));
   return {
     enabled: !!cfg.enabled,
     openPositions: positions.length,
     positions: positions.map(p => {
-      // Si no tiene precio actual, usar el de entrada como fallback
       const current = p.current_price || p.entry_price;
       const pnlPct = current > 0 && p.entry_price > 0
         ? (((current - p.entry_price) / p.entry_price) * 100).toFixed(1) + '%'
@@ -708,7 +715,7 @@ function getStatus() {
       return {
         symbol: p.symbol, qty: p.quantity, entry: p.entry_price,
         current, sl: p.stop_loss, tp: p.take_profit, side: p.side, pnlPct,
-        mode: (p.order_id && p.order_id.startsWith('PAPER')) ? 'PAPER' : 'LIVE',
+        mode: 'LIVE',
       };
     }),
     config: { max_usd: cfg.max_per_trade_usd, risk: cfg.risk_level, sl: cfg.stop_loss_pct, tp: cfg.take_profit_pct },

@@ -159,7 +159,10 @@ async function getOHLCV(pair, timeframe, limit) {
 
 async function createOrder(userId, apiKeyId, pair, side, amount) {
   const exchange = getExchangeForUser(userId, apiKeyId);
-  return exchange.createMarketOrder(pair, side, amount);
+  console.log(`[Binance] Orden ${side.toUpperCase()} ${pair}: qty=${amount}`);
+  const order = await exchange.createMarketOrder(pair, side, amount);
+  console.log(`[Binance] Orden OK: id=${order?.id} filled=${order?.filled} avg=$${order?.average || order?.price || '?'} cost=$${order?.cost || '?'}`);
+  return order;
 }
 
 async function testConnection(userId, apiKeyId) {

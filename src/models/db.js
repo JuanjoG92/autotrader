@@ -230,12 +230,14 @@ function initDB() {
       quantity REAL NOT NULL DEFAULT 0,
       entry_price REAL NOT NULL DEFAULT 0,
       current_price REAL DEFAULT 0,
+      sell_price REAL DEFAULT 0,
       stop_loss REAL DEFAULT 0,
       take_profit REAL DEFAULT 0,
       status TEXT DEFAULT 'OPEN',
       order_id TEXT DEFAULT '',
       reason TEXT DEFAULT '',
       pnl REAL DEFAULT 0,
+      fees REAL DEFAULT 0,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       closed_at DATETIME DEFAULT NULL
     );
@@ -246,6 +248,10 @@ function initDB() {
   try {
     conn.prepare("UPDATE crypto_config SET analysis_interval_min = 15 WHERE analysis_interval_min = 3").run();
   } catch {}
+
+  // Agregar columnas nuevas si no existen (migración)
+  try { conn.prepare('ALTER TABLE crypto_positions ADD COLUMN sell_price REAL DEFAULT 0').run(); } catch {}
+  try { conn.prepare('ALTER TABLE crypto_positions ADD COLUMN fees REAL DEFAULT 0').run(); } catch {}
 
   console.log('Database initialized');
 }
