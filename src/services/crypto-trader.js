@@ -301,7 +301,11 @@ async function runAnalysis() {
 
   const positions = getOpenPositions();
   const posCtx = positions.length
-    ? positions.map(p => `${p.symbol}: ${p.quantity} @ $${p.entry_price} (SL:$${p.stop_loss} TP:$${p.take_profit})`).join('\n')
+    ? positions.map(p => {
+        const curPrice = currentPrices[p.symbol] || p.current_price || p.entry_price;
+        const pnl = ((curPrice - p.entry_price) / p.entry_price * 100).toFixed(1);
+        return `${p.symbol}: ${p.quantity} @ $${p.entry_price} → $${curPrice} (${pnl}%) SL:$${p.stop_loss} TP:$${p.take_profit}`;
+      }).join('\n')
     : 'Sin posiciones abiertas.';
 
   let balanceCtx = 'USDT libre: $0 (sin conexión)';
@@ -327,7 +331,7 @@ POSICIONES: ${posCtx}
 
 NOTICIAS: ${newsCtx}
 ${ragCtx ? `\nESTRATEGIA (RAG): ${ragCtx.substring(0, 500)}` : ''}
-REGLAS: Comisión 0.2% round-trip (operar si >0.5%). PRIORIZAR top gainers con momentum fuerte y volumen alto. No overtrading. HOLD si no hay oportunidad clara. Max 25% capital/operación. Cualquier par /USDT listado arriba es válido. No comprar duplicados. SELL si debilidad. Confidence 0.60-0.95 (ejecutar >0.75). Incluir amount_usd.
+REGLAS: Comisión 0.2% round-trip (operar si >0.5%). PRIORIZAR top gainers con momentum fuerte y volumen alto. IMPORTANTE: Si hay posiciones abiertas estancadas (0% o negativas) y hay mejores oportunidades en gainers, VENDER las estancadas para liberar capital. Rotar capital hacia las que más suben. Max 25% capital/operación. Cualquier par /USDT listado arriba es válido. No comprar duplicados. Confidence 0.60-0.95 (ejecutar >0.70). Incluir amount_usd.
 
 JSON:
 {"signals":[{"symbol":"XXX/USDT","action":"BUY|SELL|HOLD","confidence":0.82,"amount_usd":10,"reason":"..."}],"analysis":"resumen breve","market_sentiment":"BULLISH|BEARISH|NEUTRAL","watchlist":["ETH/USDT"]}`;

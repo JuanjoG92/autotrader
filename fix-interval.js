@@ -1,8 +1,8 @@
-// Actualizar intervalo de análisis a 5 min
+// Actualizar config para trading activo
 const { getDB, initDB } = require('./src/models/db');
 initDB();
 const db = getDB();
-db.prepare('UPDATE crypto_config SET analysis_interval_min = 5 WHERE id = 1').run();
+db.prepare('UPDATE crypto_config SET analysis_interval_min = 5, min_confidence = 0.70 WHERE id = 1').run();
 const cfg = db.prepare('SELECT * FROM crypto_config WHERE id = 1').get();
 console.log('Config actualizada:', JSON.stringify(cfg, null, 2));
 
