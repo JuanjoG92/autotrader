@@ -190,50 +190,40 @@ function _calculateRSI(closes, period) {
   return 100 - (100 / (1 + avgGain / avgLoss));
 }
 
-// ── Validación pre-compra: RSI + pump check (ESTRICTO) ─────────────────────
+// ── Validación pre-compra: 2 reglas simples y profesionales ────────────────
+// 1. RSI < 70 → no está sobrecomprada
+// 2. Precio cerca del máximo reciente → sigue subiendo, no cayendo
 
 async function _checkBuyConditions(symbol, change24h) {
-  const isStable = ['BTC/USDT', 'ETH/USDT', 'BNB/USDT', 'SOL/USDT', 'XRP/USDT'].includes(symbol);
-
-  // 1. Volátiles: rechazar si ya subieron +30%
-  if (!isStable && change24h > 30) {
-    console.log(`[Crypto] ⚠️ Skip ${symbol}: +${change24h.toFixed(0)}% en 24h — ya pumpeó`);
-    return { ok: false, reason: `+${change24h.toFixed(0)}% ya pumpeó` };
-  }
-
-  // 2. Calcular RSI REAL en velas de 15 min
   try {
     const candles = await getOHLCV(symbol, '15m', 30);
     if (candles && candles.length >= 16) {
       const closes = candles.map(c => c[4]);
       const rsi = _calculateRSI(closes);
 
-      // Estables: comprar si RSI < 45 (sobrevendida = oportunidad)
-      // Volátiles: comprar si RSI < 65 (no sobrecomprada)
-      const maxRSI = isStable ? 45 : 65;
-      if (rsi > maxRSI) {
-        console.log(`[Crypto] ⚠️ Skip ${symbol}: RSI=${rsi.toFixed(0)} > ${maxRSI} — ${isStable ? 'no sobrevendida' : 'sobrecomprada'}`);
-        return { ok: false, reason: `RSI ${rsi.toFixed(0)} > ${maxRSI}` };
+      // Regla 1: RSI < 70 (no sobrecomprada)
+      if (rsi > 70) {
+        console.log(`[Crypto] ⚠️ Skip ${symbol}: RSI=${rsi.toFixed(0)} > 70 — sobrecomprada`);
+        return { ok: false, reason: `RSI ${rsi.toFixed(0)} sobrecomprada` };
       }
 
-      // 3. Precio no debe haber caído >3% desde máximo reciente (pump activo)
+      // Regla 2: precio no cayó >3% del máximo reciente (sigue subiendo)
       const recentHighs = candles.slice(-6).map(c => c[2]);
       const recentHigh = Math.max(...recentHighs);
       const currentPrice = closes[closes.length - 1];
       const dropFromHigh = ((recentHigh - currentPrice) / recentHigh) * 100;
-      if (!isStable && dropFromHigh > 3) {
-        console.log(`[Crypto] ⚠️ Skip ${symbol}: cayó ${dropFromHigh.toFixed(1)}% desde máximo — pump fading`);
-        return { ok: false, reason: `${dropFromHigh.toFixed(1)}% debajo del máximo` };
+      if (dropFromHigh > 3) {
+        console.log(`[Crypto] ⚠️ Skip ${symbol}: cayó ${dropFromHigh.toFixed(1)}% del máximo — está bajando`);
+        return { ok: false, reason: `cayendo ${dropFromHigh.toFixed(1)}%` };
       }
 
-      console.log(`[Crypto] ✓ ${symbol}: RSI=${rsi.toFixed(0)}/${maxRSI}, 24h=${change24h >= 0 ? '+' : ''}${change24h.toFixed(0)}%, drop=${dropFromHigh.toFixed(1)}% — ${isStable ? 'ESTABLE' : 'MOMENTUM'} OK`);
+      console.log(`[Crypto] ✓ ${symbol}: RSI=${rsi.toFixed(0)}, +${change24h.toFixed(0)}%, drop=${dropFromHigh.toFixed(1)}% — OK`);
       return { ok: true, rsi };
     }
   } catch (e) {
     console.warn(`[Crypto] RSI check failed for ${symbol}: ${(e.message || '').substring(0, 40)}`);
   }
-  // Si NO pudimos verificar RSI → NO comprar (antes permitía, eso causaba pérdidas)
-  console.log(`[Crypto] ⚠️ Skip ${symbol}: sin datos RSI — no comprar sin confirmación técnica`);
+  console.log(`[Crypto] ⚠️ Skip ${symbol}: sin datos técnicos`);
   return { ok: false, reason: 'Sin datos RSI' };
 }
 
@@ -484,17 +474,14 @@ POSICIONES ABIERTAS: ${posCtx}
 
 NOTICIAS: ${newsCtx}
 
-REGLAS ESTRICTAS DE TRADING:
-1. SOLO COMPRAR si RSI < 65 (NO sobrecomprada). RSI > 70 = PROHIBIDO comprar.
-2. SOLO COMPRAR si el precio está a menos de 3% del máximo reciente (Drop < 3%).
-3. Preferir coins con RSI 30-55 (zona de entrada ideal) y volumen >$3M.
-4. Las criptos base (BTC, ETH, SOL, BNB) son más seguras — comprar si RSI < 40 (sobrevendida = oportunidad).
-5. Criptos con momentum (+5 a +25% en 24h): comprar solo si RSI < 60 Y Drop < 3%.
-6. PROHIBIDO comprar criptos con +30% o más en 24h (ya pumpearon).
-7. SELL solo si posición bajó más de -${cfg.stop_loss_pct || 5}% desde entrada.
-8. Sin USDT libre → HOLD. Posiciones en ganancia → HOLD.
-9. amount_usd = $${positionSize}. Confidence > 0.80 solo con RSI favorable.
-10. Si NINGUNA cripto cumple las condiciones → NO dar BUY. Es mejor esperar.
+REGLAS DE TRADING:
+1. COMPRAR si RSI < 70 (no sobrecomprada) Y precio cerca del máximo reciente (drop < 3%).
+2. Preferir RSI 30-55 (mejor zona de entrada) y volumen >$3M.
+3. Cualquier cripto puede ser buena si RSI es favorable — no importa si subió 5% o 50%.
+4. SELL solo si posición bajó más de -${cfg.stop_loss_pct || 5}% desde entrada.
+5. Sin USDT libre → HOLD. Posiciones en ganancia → HOLD.
+6. amount_usd = $${positionSize}. Confidence > 0.80 solo con RSI favorable.
+7. Si NINGUNA cripto tiene RSI favorable → NO dar BUY. Esperar es válido.
 
 JSON:
 {"signals":[{"symbol":"XXX/USDT","action":"BUY|SELL|HOLD","confidence":0.85,"amount_usd":${positionSize},"reason":"RSI=XX, ..."}],"analysis":"breve","market_sentiment":"BULLISH|BEARISH|NEUTRAL","watchlist":[]}`;
@@ -506,7 +493,7 @@ JSON:
       body: JSON.stringify({
         model: OPENAI_MODEL, temperature: 0.2, max_tokens: 800,
         messages: [
-          { role: 'system', content: 'Eres un trader técnico profesional. Tomas decisiones SOLO basándote en indicadores técnicos reales (RSI, volumen, precio vs máximo). Si ninguna cripto cumple las condiciones técnicas, NO das señales de compra — esperar es una estrategia válida. NUNCA compras con RSI > 65. Priorizas BTC/ETH/SOL en zonas de sobreventa (RSI < 40). JSON válido siempre.' },
+          { role: 'system', content: 'Eres un trader técnico. Decides basándote en RSI y precio vs máximo reciente. RSI < 70 y precio cerca del high = comprar. RSI > 70 o precio cayendo = esperar. Si nada cumple, no dar BUY. JSON válido siempre.' },
           { role: 'user', content: prompt },
         ],
         response_format: { type: 'json_object' },
@@ -598,28 +585,21 @@ JSON:
       const gainerData = (await getTopGainers(20)).find(g => g.symbol === sig.symbol);
       const change24h = gainerData?.change24h || techData?.change || 0;
 
-      // Si ya tenemos RSI del pre-análisis, usarlo (evitar doble llamada API)
+      // Validar con datos técnicos pre-calculados o en tiempo real
       if (techData && techData.rsi > 0) {
-        const isStable = ['BTC/USDT', 'ETH/USDT', 'BNB/USDT', 'SOL/USDT', 'XRP/USDT'].includes(sig.symbol);
-        const maxRSI = isStable ? 45 : 65;
-        if (techData.rsi > maxRSI) {
-          console.log(`[Crypto] ❌ BLOQUEADO BUY ${sig.symbol}: RSI=${techData.rsi} > ${maxRSI}`);
+        if (techData.rsi > 70) {
+          console.log(`[Crypto] ❌ BLOQUEADO ${sig.symbol}: RSI=${techData.rsi} > 70`);
           continue;
         }
-        if (!isStable && change24h > 30) {
-          console.log(`[Crypto] ❌ BLOQUEADO BUY ${sig.symbol}: +${change24h.toFixed(0)}% ya pumpeó`);
+        if (techData.dropFromHigh > 3) {
+          console.log(`[Crypto] ❌ BLOQUEADO ${sig.symbol}: cayendo ${techData.dropFromHigh}% del máximo`);
           continue;
         }
-        if (!isStable && techData.dropFromHigh > 3) {
-          console.log(`[Crypto] ❌ BLOQUEADO BUY ${sig.symbol}: drop=${techData.dropFromHigh}% desde máximo`);
-          continue;
-        }
-        console.log(`[Crypto] ✓ ${sig.symbol}: RSI=${techData.rsi}/${maxRSI}, +${change24h.toFixed(0)}%, drop=${techData.dropFromHigh}% — OK`);
+        console.log(`[Crypto] ✓ ${sig.symbol}: RSI=${techData.rsi}, +${change24h.toFixed(0)}%, drop=${techData.dropFromHigh}% — OK`);
       } else {
-        // Fallback: calcular RSI en tiempo real si no tenemos datos previos
         const buyCheck = await _checkBuyConditions(sig.symbol, change24h);
         if (!buyCheck.ok) {
-          console.log(`[Crypto] ❌ BLOQUEADO BUY ${sig.symbol}: ${buyCheck.reason}`);
+          console.log(`[Crypto] ❌ BLOQUEADO ${sig.symbol}: ${buyCheck.reason}`);
           continue;
         }
       }
