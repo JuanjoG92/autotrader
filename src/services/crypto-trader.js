@@ -435,6 +435,7 @@ async function runAnalysis() {
 
   // ── PRE-ANÁLISIS TÉCNICO: calcular RSI real de los top coins ──
   const topCoins = (activePairs || BASE_CRYPTOS).filter(p => !BASE_CRYPTOS.includes(p)).slice(0, 6);
+  const allGainers = await getTopGainers(20);
   const technicalData = [];
   for (const symbol of topCoins) {
     try {
@@ -445,7 +446,7 @@ async function runAnalysis() {
         const recentHigh = Math.max(...candles.slice(-6).map(c => c[2]));
         const currentPrice = closes[closes.length - 1];
         const dropFromHigh = ((recentHigh - currentPrice) / recentHigh) * 100;
-        const gainer = (await getTopGainers(20)).find(g => g.symbol === symbol);
+        const gainer = allGainers.find(g => g.symbol === symbol);
         const change = gainer?.change24h || 0;
         technicalData.push({ symbol, rsi: Math.round(rsi), change: Math.round(change), dropFromHigh: Math.round(dropFromHigh * 10) / 10 });
       }
@@ -592,15 +593,35 @@ JSON:
         continue;
       }
 
-      // ── VALIDACIÓN PRE-COMPRA: RSI + pump check ──
-      const gainerData = (marketResult.activePairs || []).length > 0
-        ? (await getTopGainers(20)).find(g => g.symbol === sig.symbol)
-        : null;
-      const change24h = gainerData?.change24h || 0;
-      const buyCheck = await _checkBuyConditions(sig.symbol, change24h);
-      if (!buyCheck.ok) {
-        console.log(`[Crypto] ❌ BLOQUEADO BUY ${sig.symbol}: ${buyCheck.reason}`);
-        continue;
+      // ── VALIDACIÓN PRE-COMPRA: usar datos técnicos ya calculados ──
+      const techData = technicalData.find(t => t.symbol === sig.symbol);
+      const gainerData = (await getTopGainers(20)).find(g => g.symbol === sig.symbol);
+      const change24h = gainerData?.change24h || techData?.change || 0;
+
+      // Si ya tenemos RSI del pre-análisis, usarlo (evitar doble llamada API)
+      if (techData && techData.rsi > 0) {
+        const isStable = ['BTC/USDT', 'ETH/USDT', 'BNB/USDT', 'SOL/USDT', 'XRP/USDT'].includes(sig.symbol);
+        const maxRSI = isStable ? 45 : 65;
+        if (techData.rsi > maxRSI) {
+          console.log(`[Crypto] ❌ BLOQUEADO BUY ${sig.symbol}: RSI=${techData.rsi} > ${maxRSI}`);
+          continue;
+        }
+        if (!isStable && change24h > 30) {
+          console.log(`[Crypto] ❌ BLOQUEADO BUY ${sig.symbol}: +${change24h.toFixed(0)}% ya pumpeó`);
+          continue;
+        }
+        if (!isStable && techData.dropFromHigh > 3) {
+          console.log(`[Crypto] ❌ BLOQUEADO BUY ${sig.symbol}: drop=${techData.dropFromHigh}% desde máximo`);
+          continue;
+        }
+        console.log(`[Crypto] ✓ ${sig.symbol}: RSI=${techData.rsi}/${maxRSI}, +${change24h.toFixed(0)}%, drop=${techData.dropFromHigh}% — OK`);
+      } else {
+        // Fallback: calcular RSI en tiempo real si no tenemos datos previos
+        const buyCheck = await _checkBuyConditions(sig.symbol, change24h);
+        if (!buyCheck.ok) {
+          console.log(`[Crypto] ❌ BLOQUEADO BUY ${sig.symbol}: ${buyCheck.reason}`);
+          continue;
+        }
       }
 
       try {
