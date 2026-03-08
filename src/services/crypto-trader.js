@@ -357,62 +357,72 @@ JSON:
     // Save analysis for dashboard
     _lastAnalysis = { ...result, timestamp: new Date().toISOString() };
 
-    // Ejecutar señales
-    for (const sig of (result.signals || [])) {
-      if (!sig.symbol || (sig.confidence || 0) < cfg.min_confidence) continue;
-      if (sig.action === 'HOLD') continue;
+    // ── Ejecutar señales: SELLS PRIMERO, luego re-leer balance, luego BUYS ──
+    const sells = (result.signals || []).filter(s => s.action === 'SELL' && s.symbol && (s.confidence || 0) >= cfg.min_confidence);
+    const buys  = (result.signals || []).filter(s => s.action === 'BUY'  && s.symbol && (s.confidence || 0) >= cfg.min_confidence);
 
-      // Re-read positions fresh (may have changed during loop)
+    // Paso A: Ejecutar SELLS primero (liberar capital)
+    for (const sig of sells) {
+      const pos = positions.find(p => p.symbol === sig.symbol);
+      if (pos) {
+        try {
+          await _executeSellPosition(cfg, pos, sig.reason);
+        } catch (e) { console.error(`[Crypto] Error SELL ${sig.symbol}:`, e.message); }
+      }
+    }
+
+    // Paso B: Si vendimos algo, re-leer balance FRESCO
+    if (sells.length > 0 && keyInfo) {
+      try {
+        const freshBal = await getBalances(keyInfo.user_id, keyInfo.id);
+        if (freshBal?.USDT) {
+          availableUSDT = freshBal.USDT.free || 0;
+          console.log(`[Crypto] Balance actualizado post-venta: $${availableUSDT.toFixed(2)} USDT libre`);
+        }
+      } catch {}
+    }
+
+    // Paso C: Ejecutar BUYS con el balance actualizado
+    for (const sig of buys) {
       const currentPositions = getOpenPositions();
 
-      // No comprar si ya tenemos posición abierta
-      if (sig.action === 'BUY' && currentPositions.some(p => p.symbol === sig.symbol)) {
+      if (currentPositions.some(p => p.symbol === sig.symbol)) {
         console.log(`[Crypto] Skip ${sig.symbol} — ya tenemos posición abierta`);
         continue;
       }
 
       // Cooldown: no recomprar inmediatamente tras vender (evita loop)
-      if (sig.action === 'BUY') {
-        const recent = getDB().prepare(
-          "SELECT created_at FROM crypto_positions WHERE symbol = ? AND status = 'CLOSED' ORDER BY id DESC LIMIT 1"
-        ).get(sig.symbol);
-        if (recent) {
-          const closedAgo = Date.now() - new Date(recent.created_at + 'Z').getTime();
-          if (closedAgo < 5 * 60 * 1000) {
-            console.log(`[Crypto] Skip ${sig.symbol} — operado hace ${Math.round(closedAgo / 60000)} min (cooldown 5min)`);
-            continue;
-          }
+      const recent = getDB().prepare(
+        "SELECT closed_at FROM crypto_positions WHERE symbol = ? AND status = 'CLOSED' ORDER BY id DESC LIMIT 1"
+      ).get(sig.symbol);
+      if (recent && recent.closed_at) {
+        const closedAgo = Date.now() - new Date(recent.closed_at + 'Z').getTime();
+        if (closedAgo < 3 * 60 * 1000) {
+          console.log(`[Crypto] Skip ${sig.symbol} — vendido hace ${Math.round(closedAgo / 60000)} min (cooldown 3min)`);
+          continue;
         }
       }
 
-      // Smart amount: use AI suggested amount or 20% of available capital
-      const tradeAmount = Math.min(sig.amount_usd || positionSize, availableUSDT - 2);
-      if (sig.action === 'BUY' && tradeAmount < 5) {
+      const tradeAmount = Math.min(sig.amount_usd || positionSize, availableUSDT * 0.40);
+      if (tradeAmount < 6) {
         console.log(`[Crypto] Skip ${sig.symbol} — saldo insuficiente ($${availableUSDT.toFixed(2)})`);
         continue;
       }
 
       try {
-        if (sig.action === 'BUY') {
-          const { order, price, quantity } = await _executeTrade(cfg, sig.symbol, 'buy', tradeAmount);
-          const sl = Math.round(price * (1 - cfg.stop_loss_pct / 100) * 100) / 100;
-          const tp = Math.round(price * (1 + cfg.take_profit_pct / 100) * 100) / 100;
-          savePosition({
-            symbol: sig.symbol, side: 'BUY', quantity, entry_price: price,
-            stop_loss: sl, take_profit: tp, status: 'OPEN',
-            order_id: order?.id || '', reason: sig.reason,
-          });
-          console.log(`[Crypto] ✅ BUY ${sig.symbol}: ${quantity} @ $${price} | SL:$${sl} TP:$${tp}`);
-        }
-
-        if (sig.action === 'SELL') {
-          const pos = positions.find(p => p.symbol === sig.symbol);
-          if (pos) {
-            await _executeSellPosition(cfg, pos, sig.reason);
-          }
-        }
+        const { order, price, quantity } = await _executeTrade(cfg, sig.symbol, 'buy', tradeAmount);
+        const sl = Math.round(price * (1 - cfg.stop_loss_pct / 100) * 10000) / 10000;
+        const tp = Math.round(price * (1 + cfg.take_profit_pct / 100) * 10000) / 10000;
+        savePosition({
+          symbol: sig.symbol, side: 'BUY', quantity, entry_price: price,
+          stop_loss: sl, take_profit: tp, status: 'OPEN',
+          order_id: order?.id || '', reason: sig.reason,
+        });
+        console.log(`[Crypto] ✅ BUY ${sig.symbol}: ${quantity} @ $${price} | SL:$${sl} TP:$${tp}`);
+        // Descontar del disponible para la siguiente compra
+        availableUSDT -= (quantity * price);
       } catch (e) {
-        console.error(`[Crypto] Error ${sig.action} ${sig.symbol}:`, e.message);
+        console.error(`[Crypto] Error BUY ${sig.symbol}:`, e.message);
       }
     }
 
