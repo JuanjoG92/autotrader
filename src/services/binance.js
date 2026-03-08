@@ -373,4 +373,59 @@ function _getBinanceTime() {
   });
 }
 
-module.exports = { getBalances, getTicker, getOHLCV, createOrder, testConnection, getExchangeForUser, getTopPairs, getTopGainers, getFirstBinanceBalance, resaveApiKey, SUPPORTED_EXCHANGES };
+// ── Detectar nuevos listings de Binance ──────────────────────────────────────
+// Compara lista actual de pares /USDT vs lista guardada. Si aparece uno nuevo → listing reciente
+let _knownPairs = new Set();
+let _knownPairsLoaded = false;
+
+async function checkNewListings() {
+  try {
+    const exchange = _getSharedExchange();
+    await exchange.loadMarkets(true); // forzar refresh
+    const currentPairs = Object.keys(exchange.markets)
+      .filter(s => s.endsWith('/USDT') && !s.includes(':') && exchange.markets[s].active);
+
+    if (!_knownPairsLoaded) {
+      // Primera carga: guardar todos los pares actuales como "conocidos"
+      _knownPairs = new Set(currentPairs);
+      _knownPairsLoaded = true;
+      console.log(`[Binance] Listings: ${_knownPairs.size} pares /USDT conocidos`);
+      return [];
+    }
+
+    // Detectar nuevos (están en current pero no en known)
+    const newListings = currentPairs.filter(p => !_knownPairs.has(p));
+
+    // Actualizar la lista
+    for (const p of currentPairs) _knownPairs.add(p);
+
+    if (newListings.length > 0) {
+      console.log(`[Binance] 🚀 NUEVO LISTING DETECTADO: ${newListings.join(', ')}`);
+
+      // Obtener datos del nuevo par
+      const results = [];
+      for (const symbol of newListings) {
+        try {
+          const ticker = await exchange.fetchTicker(symbol);
+          if (ticker && ticker.last > 0) {
+            results.push({
+              symbol,
+              price: ticker.last,
+              change24h: ticker.percentage || 0,
+              volume: ticker.quoteVolume || 0,
+              isNewListing: true,
+            });
+          }
+        } catch {}
+      }
+      return results;
+    }
+
+    return [];
+  } catch (e) {
+    console.warn('[Binance] checkNewListings error:', (e.message || '').substring(0, 60));
+    return [];
+  }
+}
+
+module.exports = { getBalances, getTicker, getOHLCV, createOrder, testConnection, getExchangeForUser, getTopPairs, getTopGainers, checkNewListings, getFirstBinanceBalance, resaveApiKey, SUPPORTED_EXCHANGES };

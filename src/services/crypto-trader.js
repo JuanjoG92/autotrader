@@ -4,7 +4,7 @@
 
 const { getDB }          = require('../models/db');
 const { getOpenAIToken } = require('./ai-token');
-const { getBalances, getTicker, getTopPairs, getTopGainers, createOrder, getExchangeForUser } = require('./binance');
+const { getBalances, getTicker, getTopPairs, getTopGainers, checkNewListings, createOrder, getExchangeForUser } = require('./binance');
 const news               = require('./news-fetcher');
 const rag                = require('./rag');
 
@@ -458,11 +458,20 @@ async function monitorPositions() {
         continue;
       }
 
-      // Trailing stop: si ganó > 4%, subir SL a entry +1%
-      if (pnlPct > 4 && pos.stop_loss < pos.entry_price) {
-        const newSL = Math.round(pos.entry_price * 1.01 * 100) / 100;
-        getDB().prepare('UPDATE crypto_positions SET stop_loss = ? WHERE id = ?').run(newSL, pos.id);
-        console.log(`[Crypto] 📊 Trailing ${pos.symbol}: SL → $${newSL}`);
+      // ── Trailing Stop dinámico (proteger ganancias) ──
+      // Cuanto más ganamos, más subimos el stop-loss
+      if (pnlPct > 2) {
+        let newSL;
+        if (pnlPct > 20)     newSL = pos.entry_price * 1.15;  // +20% → SL a +15% (asegurar)
+        else if (pnlPct > 10) newSL = pos.entry_price * 1.07;  // +10% → SL a +7%
+        else if (pnlPct > 5)  newSL = pos.entry_price * 1.03;  // +5%  → SL a +3%
+        else if (pnlPct > 2)  newSL = pos.entry_price * 1.005; // +2%  → SL a +0.5% (no perder)
+
+        newSL = Math.round(newSL * 10000) / 10000;
+        if (newSL > pos.stop_loss) {
+          getDB().prepare('UPDATE crypto_positions SET stop_loss = ? WHERE id = ?').run(newSL, pos.id);
+          console.log(`[Crypto] 📊 Trailing ${pos.symbol}: +${pnlPct.toFixed(1)}% → SL subido a $${newSL} (+${(((newSL - pos.entry_price) / pos.entry_price) * 100).toFixed(1)}%)`);
+        }
       }
 
       await new Promise(r => setTimeout(r, 300));
@@ -538,7 +547,60 @@ async function _executeSellPosition(cfg, pos, reason) {
   }
 }
 
+// ── Sniper de Nuevos Listings ─────────────────────────────────────────────────
+// Revisa cada 2 min si Binance listó una cripto nueva.
+// Las criptos nuevas suelen subir 50-500%+ en las primeras horas.
+// Compra apenas detecta → trailing stop agresivo para vender en el pico.
+
+async function sniperNewListings() {
+  const cfg = getConfig();
+  if (!cfg.enabled) return;
+
+  try {
+    const newListings = await checkNewListings();
+    if (!newListings.length) return;
+
+    for (const listing of newListings) {
+      console.log(`[Crypto] 🚀 SNIPER: Nuevo listing ${listing.symbol} @ $${listing.price} | Vol: $${Math.round(listing.volume / 1e6)}M`);
+
+      // Verificar que tenga volumen mínimo (evitar scams sin liquidez)
+      if (listing.volume < 500000) {
+        console.log(`[Crypto] 🚀 Skip ${listing.symbol} — volumen muy bajo ($${Math.round(listing.volume)})`);
+        continue;
+      }
+
+      // No comprar si ya tenemos posición
+      const positions = getOpenPositions();
+      if (positions.some(p => p.symbol === listing.symbol)) continue;
+
+      // Comprar con monto conservador para nuevo listing
+      const keyInfo = _getApiKeyInfo(cfg);
+      if (!keyInfo) continue;
+
+      const tradeAmount = Math.min(cfg.max_per_trade_usd || 10, 10); // Max $10 en listings nuevos
+      try {
+        const { order, price, quantity, mode } = await _executeTrade(cfg, listing.symbol, 'buy', tradeAmount);
+        // SL más ajustado (nuevo listing = volatilidad extrema)
+        const sl = Math.round(price * 0.90 * 10000) / 10000;   // -10% SL (protección de caída)
+        const tp = Math.round(price * 1.50 * 10000) / 10000;   // +50% TP (criptos nuevas suben fuerte)
+        savePosition({
+          symbol: listing.symbol, side: 'BUY', quantity, entry_price: price,
+          stop_loss: sl, take_profit: tp, status: 'OPEN',
+          order_id: order?.id || '', reason: `🚀 NUEVO LISTING detectado — compra automática sniper`,
+        });
+        console.log(`[Crypto] 🚀 ${mode} BUY ${listing.symbol}: ${quantity} @ $${price} | SL:$${sl} TP:$${tp}`);
+      } catch (e) {
+        console.error(`[Crypto] 🚀 Error sniper ${listing.symbol}:`, e.message);
+      }
+    }
+  } catch (e) {
+    console.error('[Crypto] Sniper error:', e.message);
+  }
+}
+
 // ── Init / Control ────────────────────────────────────────────────────────────
+
+let _sniperTimer = null;
 
 function init(broadcastFn) {
   _broadcastFn = broadcastFn;
@@ -547,6 +609,7 @@ function init(broadcastFn) {
 
   if (_timer) clearInterval(_timer);
   if (_monitorTimer) clearInterval(_monitorTimer);
+  if (_sniperTimer) clearInterval(_sniperTimer);
 
   _timer = setInterval(async () => {
     try { await runAnalysis(); } catch (e) { console.error('[Crypto]', e.message); }
@@ -556,7 +619,12 @@ function init(broadcastFn) {
     try { await monitorPositions(); } catch (e) { console.error('[Crypto] Monitor:', e.message); }
   }, 30 * 1000);
 
-  console.log(`[Crypto] AI Trader iniciado — análisis cada ${cfg.analysis_interval_min || 15} min, monitor cada 30s`);
+  // Sniper: revisa nuevos listings cada 2 minutos
+  _sniperTimer = setInterval(async () => {
+    try { await sniperNewListings(); } catch (e) { console.error('[Crypto] Sniper:', e.message); }
+  }, 2 * 60 * 1000);
+
+  console.log(`[Crypto] AI Trader iniciado — análisis cada ${cfg.analysis_interval_min || 15} min, monitor cada 30s, sniper cada 2min`);
 
   // Primer análisis tras 20s
   setTimeout(async () => {
