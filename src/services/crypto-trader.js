@@ -404,7 +404,11 @@ async function runAnalysis() {
     const holdings = [];
     for (const [coin, info] of Object.entries(balanceResult)) {
       if (coin === 'USDT' || coin === 'ARS' || !info.total || info.total <= 0) continue;
-      const pairPrice = currentPrices[coin + '/USDT'] || 0;
+      let pairPrice = currentPrices[coin + '/USDT'] || 0;
+      // Si no está en los pares activos, buscar precio individual
+      if (pairPrice === 0) {
+        try { const t = await getTicker(coin + '/USDT'); pairPrice = t?.last || 0; } catch {}
+      }
       const val = info.total * pairPrice;
       if (val > 0.5) {
         totalPortfolio += val;
