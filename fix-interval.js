@@ -11,5 +11,4 @@ const open = db.prepare("SELECT * FROM crypto_positions WHERE status = 'OPEN'").
 console.log(`\nPosiciones abiertas: ${open.length}`);
 open.forEach(p => console.log(`  ${p.symbol}: ${p.quantity} @ $${p.entry_price} | order: ${p.order_id}`));
 
-// Ver cuánto USDT libre tiene
 process.exit(0);
