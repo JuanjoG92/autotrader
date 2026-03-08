@@ -103,6 +103,14 @@ router.get('/market', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// Top gainers dinámicos (lo que analiza el bot)
+router.get('/gainers', async (req, res) => {
+  try {
+    const gainers = await binance.getTopGainers(12);
+    res.json(gainers);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // Orden manual crypto
 router.post('/order', async (req, res) => {
   try {

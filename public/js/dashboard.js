@@ -40,7 +40,28 @@
   connectPriceStream();
   loadOverview();
   loadKeys();
+  loadTopGainers();
   setInterval(loadOverview, 30000);
+  setInterval(loadTopGainers, 5 * 60 * 1000); // Actualizar gainers cada 5 min
+
+  // ── Top Gainers ──
+  async function loadTopGainers() {
+    apiFetch('/crypto/gainers').then(gainers => {
+      if (!gainers || !Array.isArray(gainers) || !gainers.length) return;
+      const grid = document.getElementById('topGainersGrid');
+      if (!grid) return;
+      grid.innerHTML = gainers.map(g => {
+        const sym = g.symbol.split('/')[0];
+        const color = g.change24h >= 10 ? '#10b981' : g.change24h >= 5 ? '#22c55e' : '#64748b';
+        const bg = g.change24h >= 10 ? 'rgba(16,185,129,.08)' : 'rgba(100,116,139,.04)';
+        return `<div style="background:${bg};border:1px solid rgba(255,255,255,.06);border-radius:8px;padding:10px 12px;border-left:3px solid ${color}">
+          <div style="font-weight:600;font-size:13px;color:#e2e8f0">${sym}</div>
+          <div style="font-size:18px;font-weight:700;color:${color};margin:2px 0">+${g.change24h.toFixed(1)}%</div>
+          <div style="font-size:11px;color:#64748b">$${g.price < 1 ? g.price.toFixed(4) : g.price.toFixed(2)} · Vol $${Math.round(g.volume / 1e6)}M</div>
+        </div>`;
+      }).join('');
+    }).catch(() => {});
+  }
 
   // ── Overview (progressive loading — cada dato se muestra al llegar) ──
   async function loadOverview() {
