@@ -227,13 +227,14 @@ async function _checkBuyConditions(symbol, change24h) {
   return { ok: true, rsi: 50 }; // Si no pudimos verificar, permitir
 }
 
-// ── Control de trades diarios ─────────────────────────────────────────────────
+// ── Control de trades recientes ───────────────────────────────────────────────
 
 function _getTodayTradeCount() {
-  const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+  // Contar trades de las últimas 8 horas (no desde medianoche UTC)
+  const cutoff = new Date(Date.now() - 8 * 60 * 60 * 1000).toISOString();
   const row = getDB().prepare(
     "SELECT COUNT(*) as cnt FROM crypto_positions WHERE order_id NOT LIKE 'PAPER%' AND created_at >= ? AND side = 'BUY'"
-  ).get(today + ' 00:00:00');
+  ).get(cutoff);
   return row?.cnt || 0;
 }
 
