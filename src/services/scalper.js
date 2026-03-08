@@ -153,24 +153,40 @@ function connectWebSocket() {
 
 // ── Motor de decisiones (corre cada 10 seg) ──────────────────────────────────
 
+let _lastLog = 0;
+
 async function makeDecisions() {
   const cfg = getConfig();
   if (!cfg.enabled) return;
-  if (!_wsReady || Object.keys(_currentTick).length < 50) return; // Esperar datos
+  const tickCount = Object.keys(_currentTick).length;
+  const histCount = Object.keys(_prices).length;
+  if (!_wsReady || tickCount < 50) return;
 
-  const positions = getOpenPositions();
-  if (positions.length >= MAX_POSITIONS) return;
-  if (_getTradeCount8h() >= MAX_TRADES_8H) return;
+  const allPositions = getOpenPositions();
+  const scalpPositions = allPositions.filter(p => p.order_id && p.order_id.startsWith('SCALP'));
+  const trades8h = _getTradeCount8h();
+
+  // Log estado cada 60 seg para que el usuario vea actividad
+  const now = Date.now();
+  if (now - _lastLog > 60000) {
+    _lastLog = now;
+    console.log(`[Scalper] RT: ${tickCount} coins, ${histCount} con historia | Posiciones: ${scalpPositions.length}/${MAX_POSITIONS} scalp, ${allPositions.length} total | Trades 8h: ${trades8h}/${MAX_TRADES_8H}`);
+  }
+
+  // Límite: max 3 posiciones SCALPER (no cuenta las de IA)
+  if (scalpPositions.length >= MAX_POSITIONS) return;
+  // Límite total: max 5 posiciones entre todos
+  if (allPositions.length >= 5) return;
+  if (trades8h >= MAX_TRADES_8H) return;
 
   // Buscar criptos subiendo AHORA
   const candidates = [];
-  const now = Date.now();
 
   for (const [symbol, hist] of Object.entries(_prices)) {
     if (hist.length < 6) continue; // Necesita al menos 1 min de data
 
     // Ya tenemos posición? Skip
-    if (positions.some(p => p.symbol === symbol)) continue;
+    if (allPositions.some(p => p.symbol === symbol)) continue;
 
     const current = _currentTick[symbol];
     if (!current || current.vol < MIN_VOLUME_USD) continue; // Sin volumen
@@ -193,6 +209,8 @@ async function makeDecisions() {
 
   // Ordenar por cambio (más subida = más momentum)
   candidates.sort((a, b) => b.change - a.change);
+  const top3 = candidates.slice(0, 3).map(c => `${c.symbol.replace('/USDT','')} +${c.change.toFixed(1)}%`).join(', ');
+  console.log(`[Scalper] 📈 ${candidates.length} subiendo: ${top3}`);
   const best = candidates[0];
 
   // Cooldown check
