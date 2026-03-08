@@ -217,8 +217,8 @@ function initDB() {
       max_per_trade_usd REAL DEFAULT 50,
       min_confidence REAL DEFAULT 0.75,
       risk_level TEXT DEFAULT 'medium',
-      stop_loss_pct REAL DEFAULT 3.0,
-      take_profit_pct REAL DEFAULT 6.0,
+      stop_loss_pct REAL DEFAULT 5.0,
+      take_profit_pct REAL DEFAULT 15.0,
       analysis_interval_min INTEGER DEFAULT 15,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
@@ -252,6 +252,12 @@ function initDB() {
   // Agregar columnas nuevas si no existen (migración)
   try { conn.prepare('ALTER TABLE crypto_positions ADD COLUMN sell_price REAL DEFAULT 0').run(); } catch {}
   try { conn.prepare('ALTER TABLE crypto_positions ADD COLUMN fees REAL DEFAULT 0').run(); } catch {}
+
+  // Migrar SL/TP a valores óptimos (1:3 risk/reward)
+  try {
+    conn.prepare("UPDATE crypto_config SET stop_loss_pct = 5.0 WHERE stop_loss_pct = 3.0").run();
+    conn.prepare("UPDATE crypto_config SET take_profit_pct = 15.0 WHERE take_profit_pct = 6.0").run();
+  } catch {}
 
   console.log('Database initialized');
 }

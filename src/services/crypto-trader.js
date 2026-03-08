@@ -4,7 +4,7 @@
 
 const { getDB }          = require('../models/db');
 const { getOpenAIToken } = require('./ai-token');
-const { getBalances, getTicker, getTopPairs, getTopGainers, checkNewListings, createOrder, getExchangeForUser, getMarketInfo, formatAmount } = require('./binance');
+const { getBalances, getTicker, getTopPairs, getTopGainers, checkNewListings, createOrder, getExchangeForUser, getMarketInfo, formatAmount, getOHLCV } = require('./binance');
 const news               = require('./news-fetcher');
 const rag                = require('./rag');
 
@@ -158,9 +158,83 @@ function _getApiKeyInfo(cfg) {
     const row = db.prepare('SELECT * FROM api_keys WHERE id = ?').get(cfg.api_key_id);
     if (row) return row;
   }
-  // Buscar primera API key de Binance disponible
   const row = db.prepare("SELECT * FROM api_keys WHERE exchange = 'binance' LIMIT 1").get();
   return row || null;
+}
+
+// ── RSI (Relative Strength Index) ─────────────────────────────────────────────
+
+function _calculateRSI(closes, period) {
+  period = period || 14;
+  if (closes.length < period + 1) return 50;
+  let gains = 0, losses = 0;
+  for (let i = 1; i <= period; i++) {
+    const diff = closes[i] - closes[i - 1];
+    if (diff >= 0) gains += diff; else losses -= diff;
+  }
+  let avgGain = gains / period;
+  let avgLoss = losses / period;
+  for (let i = period + 1; i < closes.length; i++) {
+    const diff = closes[i] - closes[i - 1];
+    if (diff >= 0) {
+      avgGain = (avgGain * (period - 1) + diff) / period;
+      avgLoss = (avgLoss * (period - 1)) / period;
+    } else {
+      avgGain = (avgGain * (period - 1)) / period;
+      avgLoss = (avgLoss * (period - 1) - diff) / period;
+    }
+  }
+  if (avgLoss === 0) return 100;
+  return 100 - (100 / (1 + avgGain / avgLoss));
+}
+
+// ── Validación pre-compra: RSI + pump check ───────────────────────────────────
+
+async function _checkBuyConditions(symbol, change24h) {
+  // 1. Rechazar criptos que ya subieron demasiado (+50%) — el pump probablemente terminó
+  if (change24h > 50) {
+    console.log(`[Crypto] ⚠️ Skip ${symbol}: +${change24h.toFixed(0)}% en 24h — demasiado pumpeada`);
+    return { ok: false, reason: `+${change24h.toFixed(0)}% ya pumpeó` };
+  }
+
+  // 2. Calcular RSI en velas de 15 min — si > 75, está sobrecomprada
+  try {
+    const candles = await getOHLCV(symbol, '15m', 30);
+    if (candles && candles.length >= 16) {
+      const closes = candles.map(c => c[4]); // [time, open, high, low, close, volume]
+      const rsi = _calculateRSI(closes);
+      if (rsi > 75) {
+        console.log(`[Crypto] ⚠️ Skip ${symbol}: RSI=${rsi.toFixed(0)} — sobrecomprada`);
+        return { ok: false, reason: `RSI ${rsi.toFixed(0)} sobrecomprada` };
+      }
+
+      // 3. Verificar que el precio no cayó >5% desde el máximo de hoy (pump fading)
+      const recentHighs = candles.slice(-8).map(c => c[2]); // últimas 2 horas de highs
+      const recentHigh = Math.max(...recentHighs);
+      const currentPrice = closes[closes.length - 1];
+      const dropFromHigh = ((recentHigh - currentPrice) / recentHigh) * 100;
+      if (dropFromHigh > 5) {
+        console.log(`[Crypto] ⚠️ Skip ${symbol}: cayó ${dropFromHigh.toFixed(1)}% desde máximo reciente — pump terminando`);
+        return { ok: false, reason: `${dropFromHigh.toFixed(1)}% debajo del máximo` };
+      }
+
+      console.log(`[Crypto] ✓ ${symbol}: RSI=${rsi.toFixed(0)}, 24h=+${change24h.toFixed(0)}%, drop=${dropFromHigh.toFixed(1)}% — OK para comprar`);
+      return { ok: true, rsi };
+    }
+  } catch (e) {
+    console.warn(`[Crypto] RSI check failed for ${symbol}: ${(e.message || '').substring(0, 40)}`);
+  }
+  return { ok: true, rsi: 50 }; // Si no pudimos verificar, permitir
+}
+
+// ── Control de trades diarios ─────────────────────────────────────────────────
+
+function _getTodayTradeCount() {
+  const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+  const row = getDB().prepare(
+    "SELECT COUNT(*) as cnt FROM crypto_positions WHERE order_id NOT LIKE 'PAPER%' AND created_at >= ? AND side = 'BUY'"
+  ).get(today + ' 00:00:00');
+  return row?.cnt || 0;
 }
 
 async function _executeTrade(cfg, symbol, side, quantityUSD) {
@@ -342,11 +416,10 @@ async function runAnalysis() {
   }
 
   // Invertir 50% del USDT disponible en cada top gainer (2 posiciones = 100%)
-  // Usar availableUSDT (lo que realmente podemos gastar), no totalPortfolio
   const positionSize = Math.max(10, Math.floor(availableUSDT * 0.50));
 
-  // Prompt: invertir en top gainers, PROHIBIDO vender para rotar
-  const prompt = `CRYPTO TRADER — Binance Spot — REGLAS ESTRICTAS
+  // Prompt: estrategia profesional — NO comprar pumps extremos
+  const prompt = `CRYPTO TRADER PROFESIONAL — Binance Spot
 
 MERCADO:
 ${marketCtx}
@@ -357,14 +430,15 @@ POSICIONES ABIERTAS: ${posCtx}
 
 NOTICIAS: ${newsCtx}
 
-REGLAS OBLIGATORIAS:
-1. COMPRAR las 2 criptos con mayor subida 24h y volumen >$3M. Invertir ~$${positionSize} en cada una.
-2. PROHIBIDO VENDER para "rotar capital". NUNCA dar señal SELL para liberar dinero y comprar otra cripto.
-3. Solo dar SELL si la posición bajó más de -${cfg.stop_loss_pct || 3}% desde precio de entrada (stop-loss alcanzado).
-4. Si hay posiciones abiertas en ganancia o recién compradas → HOLD. NO tocarlas.
-5. Si no hay USDT libre suficiente para comprar → no dar BUY, solo HOLD.
-6. amount_usd debe ser $${positionSize} por señal.
-7. Confidence >0.80 solo para top gainers con volumen fuerte.
+REGLAS DE TRADER PROFESIONAL:
+1. COMPRAR criptos en INICIO de tendencia alcista (+5% a +30% en 24h). NO comprar las que ya subieron +50% o más (esas ya están en el techo).
+2. Preferir criptos con volumen creciente >$3M y momentum SOSTENIDO, no picos puntuales.
+3. PROHIBIDO VENDER para "rotar capital". NUNCA dar SELL para comprar otra cripto.
+4. Solo dar SELL si la posición bajó más de -${cfg.stop_loss_pct || 5}% (stop-loss alcanzado).
+5. Posiciones abiertas en ganancia o recién compradas → HOLD.
+6. Sin USDT libre → no dar BUY, solo HOLD.
+7. amount_usd = $${positionSize}. Confidence >0.80 solo si la señal es muy clara.
+8. Evitar criptos que ya tuvieron el pump máximo del día (buscar las que ESTÁN subiendo, no las que YA subieron).
 
 JSON:
 {"signals":[{"symbol":"XXX/USDT","action":"BUY|SELL|HOLD","confidence":0.85,"amount_usd":${positionSize},"reason":"..."}],"analysis":"breve","market_sentiment":"BULLISH|BEARISH|NEUTRAL","watchlist":[]}`;
@@ -376,7 +450,7 @@ JSON:
       body: JSON.stringify({
         model: OPENAI_MODEL, temperature: 0.2, max_tokens: 800,
         messages: [
-          { role: 'system', content: 'Eres un trader de criptomonedas profesional. Compras las criptos que más suben en 24h. NUNCA vendes una posición para rotar capital a otra cripto. Solo vendes si el stop-loss fue alcanzado. JSON válido siempre.' },
+          { role: 'system', content: 'Eres un trader de criptomonedas profesional. Buscas criptos con momentum TEMPRANO (+5 a +30% en 24h), NO las que ya subieron +50-100%. NUNCA vendes para rotar capital. Solo vendes si el stop-loss fue alcanzado. Priorizas criptos con volumen creciente y tendencia sostenida. JSON válido siempre.' },
           { role: 'user', content: prompt },
         ],
         response_format: { type: 'json_object' },
@@ -422,11 +496,26 @@ JSON:
     }
 
     // Paso C: Ejecutar BUYS con el balance actualizado
+    const todayTrades = _getTodayTradeCount();
+    const MAX_DAILY_TRADES = 6;
+
     for (const sig of buys) {
+      // Límite diario de trades
+      if (todayTrades + buys.indexOf(sig) >= MAX_DAILY_TRADES) {
+        console.log(`[Crypto] Skip ${sig.symbol} — límite diario alcanzado (${MAX_DAILY_TRADES} trades/día)`);
+        continue;
+      }
+
       const currentPositions = getOpenPositions();
 
       if (currentPositions.some(p => p.symbol === sig.symbol)) {
         console.log(`[Crypto] Skip ${sig.symbol} — ya tenemos posición abierta`);
+        continue;
+      }
+
+      // Máximo 3 posiciones abiertas simultáneas
+      if (currentPositions.length >= 3) {
+        console.log(`[Crypto] Skip ${sig.symbol} — ya hay ${currentPositions.length} posiciones abiertas (max 3)`);
         continue;
       }
 
@@ -448,6 +537,17 @@ JSON:
         continue;
       }
 
+      // ── VALIDACIÓN PRE-COMPRA: RSI + pump check ──
+      const gainerData = (marketResult.activePairs || []).length > 0
+        ? (await getTopGainers(20)).find(g => g.symbol === sig.symbol)
+        : null;
+      const change24h = gainerData?.change24h || 0;
+      const buyCheck = await _checkBuyConditions(sig.symbol, change24h);
+      if (!buyCheck.ok) {
+        console.log(`[Crypto] ❌ BLOQUEADO BUY ${sig.symbol}: ${buyCheck.reason}`);
+        continue;
+      }
+
       try {
         const { order, price, quantity } = await _executeTrade(cfg, sig.symbol, 'buy', tradeAmount);
         const sl = Math.round(price * (1 - cfg.stop_loss_pct / 100) * 10000) / 10000;
@@ -457,8 +557,7 @@ JSON:
           stop_loss: sl, take_profit: tp, status: 'OPEN',
           order_id: order?.id || '', reason: sig.reason,
         });
-        console.log(`[Crypto] ✅ BUY ${sig.symbol}: ${quantity} @ $${price} | SL:$${sl} TP:$${tp}`);
-        // Descontar del disponible para la siguiente compra
+        console.log(`[Crypto] ✅ BUY ${sig.symbol}: ${quantity} @ $${price} | SL:$${sl} TP:$${tp} | RSI:${buyCheck.rsi?.toFixed(0) || '?'}`);
         availableUSDT -= (quantity * price);
       } catch (e) {
         console.error(`[Crypto] Error BUY ${sig.symbol}:`, e.message);
@@ -512,13 +611,14 @@ async function monitorPositions() {
       }
 
       // ── Trailing Stop dinámico (proteger ganancias) ──
-      // Cuanto más ganamos, más subimos el stop-loss
-      if (pnlPct > 2) {
+      // Niveles adaptados para SL 5% / TP 15% (ratio 1:3)
+      if (pnlPct > 3) {
         let newSL;
-        if (pnlPct > 20)     newSL = pos.entry_price * 1.15;  // +20% → SL a +15% (asegurar)
-        else if (pnlPct > 10) newSL = pos.entry_price * 1.07;  // +10% → SL a +7%
-        else if (pnlPct > 5)  newSL = pos.entry_price * 1.03;  // +5%  → SL a +3%
-        else if (pnlPct > 2)  newSL = pos.entry_price * 1.005; // +2%  → SL a +0.5% (no perder)
+        if (pnlPct > 25)      newSL = pos.entry_price * 1.20;  // +25% → SL a +20% (asegurar gran ganancia)
+        else if (pnlPct > 15)  newSL = pos.entry_price * 1.10;  // +15% → SL a +10%
+        else if (pnlPct > 10)  newSL = pos.entry_price * 1.06;  // +10% → SL a +6%
+        else if (pnlPct > 6)   newSL = pos.entry_price * 1.03;  // +6%  → SL a +3%
+        else if (pnlPct > 3)   newSL = pos.entry_price * 1.01;  // +3%  → SL a +1% (breakeven+)
 
         newSL = Math.round(newSL * 10000) / 10000;
         if (newSL > pos.stop_loss) {
