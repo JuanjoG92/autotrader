@@ -4,7 +4,7 @@
 
 const { getDB }          = require('../models/db');
 const { getOpenAIToken } = require('./ai-token');
-const { getBalances, getTicker, getTopPairs, getTopGainers, checkNewListings, createOrder, getExchangeForUser } = require('./binance');
+const { getBalances, getTicker, getTopPairs, getTopGainers, checkNewListings, createOrder, getExchangeForUser, getMarketInfo, formatAmount } = require('./binance');
 const news               = require('./news-fetcher');
 const rag                = require('./rag');
 
@@ -166,7 +166,11 @@ function _getApiKeyInfo(cfg) {
 async function _executeTrade(cfg, symbol, side, quantityUSD) {
   const keyInfo = _getApiKeyInfo(cfg);
 
-  // 1. Obtener precio FRESCO justo ahora (no el del análisis de hace 5-30s)
+  // 1. Cargar filtros REALES de Binance (LOT_SIZE, MIN_NOTIONAL)
+  let market = null;
+  try { market = await getMarketInfo(symbol); } catch {}
+
+  // 2. Obtener precio FRESCO justo ahora
   let price = 0;
   if (keyInfo) {
     try {
@@ -180,54 +184,60 @@ async function _executeTrade(cfg, symbol, side, quantityUSD) {
   }
   if (price <= 0) throw new Error(`Sin precio para ${symbol}`);
 
-  // 2. Calcular cantidad respetando filtros de Binance
-  //    - NOTIONAL mínimo: $5-$10 según el par (usamos $8 de safety)
-  //    - LOT_SIZE: ajustar decimales según precio del par
-  const minNotional = 8; // $8 para superar el filtro NOTIONAL de Binance con margen
-  const actualUSD = Math.max(quantityUSD, minNotional);
+  // 3. Calcular cantidad respetando filtros REALES de Binance
+  const minNotional = market?.limits?.cost?.min || 5;
+  const minAmount = market?.limits?.amount?.min || 0;
+  const actualUSD = Math.max(quantityUSD, minNotional * 1.5);
 
-  // Ajustar decimales según el precio: coins baratas necesitan menos decimales en cantidad
-  let decimalPlaces;
-  if (price >= 10000) decimalPlaces = 5;     // BTC: 0.00014
-  else if (price >= 100) decimalPlaces = 4;  // ETH/SOL: 0.0721
-  else if (price >= 1) decimalPlaces = 2;    // ALCX/LINK: 0.84
-  else if (price >= 0.01) decimalPlaces = 0; // DOGE/ADA: 16
-  else decimalPlaces = 0;                    // SHIB: 100000
-
-  let quantity = parseFloat((actualUSD / price).toFixed(decimalPlaces));
-  // Asegurar que cantidad * precio >= minNotional
-  if (quantity * price < 5) {
-    quantity = parseFloat((6 / price).toFixed(decimalPlaces));
+  let quantity;
+  if (market) {
+    quantity = formatAmount(symbol, actualUSD / price);
+    if (quantity * price < minNotional) {
+      quantity = formatAmount(symbol, (minNotional * 1.5) / price);
+    }
+    if (quantity < minAmount) quantity = minAmount;
+  } else {
+    // Fallback: adivinar decimales (sin info de mercado)
+    let decimalPlaces;
+    if (price >= 10000) decimalPlaces = 5;
+    else if (price >= 100) decimalPlaces = 4;
+    else if (price >= 1) decimalPlaces = 2;
+    else if (price >= 0.01) decimalPlaces = 0;
+    else decimalPlaces = 0;
+    quantity = parseFloat((actualUSD / price).toFixed(decimalPlaces));
+    if (quantity * price < 5) {
+      quantity = parseFloat((6 / price).toFixed(decimalPlaces));
+    }
   }
   if (quantity <= 0) throw new Error(`Cantidad muy baja para ${symbol}`);
 
-  // 3. Ejecutar en Binance (MARKET order = compra al precio actual del mercado)
-  //    No importa si el precio cambió 0.1% — la orden MARKET se ejecuta al instante
+  // 4. Ejecutar en Binance (MARKET order)
   let order = null;
   let mode = 'PAPER';
-  let fillPrice = price; // precio real de ejecución
+  let fillPrice = price;
 
   if (keyInfo) {
     for (let attempt = 1; attempt <= 2; attempt++) {
       try {
         order = await createOrder(keyInfo.user_id, keyInfo.id, symbol, side.toLowerCase(), quantity);
         mode = 'LIVE';
-        // Si Binance devuelve el precio real de ejecución, usarlo
         if (order?.average) fillPrice = order.average;
         else if (order?.price && order.price > 0) fillPrice = order.price;
         break;
       } catch (e) {
         const msg = e.message || '';
-        // NOTIONAL: monto muy bajo → reintentar con más cantidad
         if (msg.includes('NOTIONAL') && attempt === 1) {
-          console.warn(`[Crypto] ${symbol} NOTIONAL filter — subiendo a $${actualUSD * 1.5}`);
-          quantity = parseFloat(((actualUSD * 1.5) / price).toFixed(decimalPlaces));
+          console.warn(`[Crypto] ${symbol} NOTIONAL — subiendo cantidad`);
+          quantity = market
+            ? formatAmount(symbol, (actualUSD * 2) / price)
+            : parseFloat(((actualUSD * 2) / price).toFixed(2));
           continue;
         }
-        // LOT_SIZE: cantidad inválida → ajustar decimales
         if (msg.includes('LOT_SIZE') && attempt === 1) {
-          console.warn(`[Crypto] ${symbol} LOT_SIZE filter — ajustando decimales`);
-          quantity = Math.max(1, Math.floor(actualUSD / price));
+          console.warn(`[Crypto] ${symbol} LOT_SIZE — ajustando con floor`);
+          quantity = market
+            ? formatAmount(symbol, Math.floor(actualUSD / price))
+            : Math.max(1, Math.floor(actualUSD / price));
           continue;
         }
         if (attempt < 2 && (msg.includes('timed out') || msg.includes('ETIMEDOUT') || msg.includes('ECONNRESET'))) {
@@ -236,7 +246,6 @@ async function _executeTrade(cfg, symbol, side, quantityUSD) {
           continue;
         }
         console.warn(`[Crypto] Binance orden falló (${msg.substring(0, 80)})`);
-        // NO crear posición PAPER — si Binance rechaza, no guardar nada
         throw new Error(`Orden rechazada: ${msg.substring(0, 60)}`);
       }
     }
@@ -311,10 +320,10 @@ async function runAnalysis() {
 
   let balanceCtx = 'USDT libre: $0 (sin conexión)';
   let availableUSDT = 0;
+  let totalPortfolio = 0;
   if (balanceResult) {
-    // Calcular capital TOTAL (USDT + valor de todas las criptos)
     availableUSDT = balanceResult.USDT?.free || 0;
-    let totalPortfolio = availableUSDT;
+    totalPortfolio = availableUSDT;
     const holdings = [];
     for (const [coin, info] of Object.entries(balanceResult)) {
       if (coin === 'USDT' || coin === 'ARS' || !info.total || info.total <= 0) continue;
@@ -332,26 +341,29 @@ async function runAnalysis() {
     console.warn('[Crypto] ⚠️ No se pudo leer balance de Binance');
   }
 
-  // Invertir FUERTE: 50% del capital en cada top gainer (2 posiciones = 100%)
-  const positionSize = Math.max(8, Math.floor(availableUSDT * 0.50));
+  // Invertir 50% del portfolio TOTAL en cada top gainer (2 posiciones = 100%)
+  const positionSize = Math.max(8, Math.floor(totalPortfolio * 0.50));
 
-  // Prompt agresivo: invertir TODO en los top gainers
-  const prompt = `CRYPTO TRADER AGRESIVO — Binance Spot
+  // Prompt: invertir en top gainers, PROHIBIDO vender para rotar
+  const prompt = `CRYPTO TRADER — Binance Spot — REGLAS ESTRICTAS
 
 MERCADO:
 ${marketCtx}
 
-BALANCE: ${balanceCtx} | USDT libre: $${availableUSDT.toFixed(0)} | Invertir ~$${positionSize} por operación
+BALANCE: ${balanceCtx} | USDT libre: $${availableUSDT.toFixed(0)} | Portfolio total: ~$${totalPortfolio.toFixed(0)} | Invertir ~$${positionSize} por operación
 
-POSICIONES: ${posCtx}
+POSICIONES ABIERTAS: ${posCtx}
 
 NOTICIAS: ${newsCtx}
-REGLAS ESTRICTAS:
-- COMPRAR las 2 criptos con mayor subida 24h y volumen >$3M. Invertir FUERTE ($${positionSize} cada una).
-- NO vender posiciones que estén en ganancia o recién compradas. Solo SELL si bajan más de -2% desde entrada.
-- Incluir amount_usd con el monto real a invertir ($${positionSize} por señal).
-- Cualquier par /USDT del mercado listado arriba es válido.
-- Confidence alta (>0.80) para compras de top gainers.
+
+REGLAS OBLIGATORIAS:
+1. COMPRAR las 2 criptos con mayor subida 24h y volumen >$3M. Invertir ~$${positionSize} en cada una.
+2. PROHIBIDO VENDER para "rotar capital". NUNCA dar señal SELL para liberar dinero y comprar otra cripto.
+3. Solo dar SELL si la posición bajó más de -${cfg.stop_loss_pct || 3}% desde precio de entrada (stop-loss alcanzado).
+4. Si hay posiciones abiertas en ganancia o recién compradas → HOLD. NO tocarlas.
+5. Si no hay USDT libre suficiente para comprar → no dar BUY, solo HOLD.
+6. amount_usd debe ser $${positionSize} por señal.
+7. Confidence >0.80 solo para top gainers con volumen fuerte.
 
 JSON:
 {"signals":[{"symbol":"XXX/USDT","action":"BUY|SELL|HOLD","confidence":0.85,"amount_usd":${positionSize},"reason":"..."}],"analysis":"breve","market_sentiment":"BULLISH|BEARISH|NEUTRAL","watchlist":[]}`;
@@ -363,7 +375,7 @@ JSON:
       body: JSON.stringify({
         model: OPENAI_MODEL, temperature: 0.2, max_tokens: 800,
         messages: [
-          { role: 'system', content: 'Eres un trader de criptomonedas agresivo y profesional. Tu objetivo es MAXIMIZAR ganancias comprando las criptos que más suben. Inviertes fuerte en los top gainers. JSON válido siempre.' },
+          { role: 'system', content: 'Eres un trader de criptomonedas profesional. Compras las criptos que más suben en 24h. NUNCA vendes una posición para rotar capital a otra cripto. Solo vendes si el stop-loss fue alcanzado. JSON válido siempre.' },
           { role: 'user', content: prompt },
         ],
         response_format: { type: 'json_object' },
@@ -381,14 +393,20 @@ JSON:
     const sells = (result.signals || []).filter(s => s.action === 'SELL' && s.symbol && (s.confidence || 0) >= cfg.min_confidence);
     const buys  = (result.signals || []).filter(s => s.action === 'BUY'  && s.symbol && (s.confidence || 0) >= cfg.min_confidence);
 
-    // Paso A: Ejecutar SELLS primero (liberar capital)
+    // Paso A: Ejecutar SELLS — SOLO si posición realmente tocó stop-loss
     for (const sig of sells) {
       const pos = positions.find(p => p.symbol === sig.symbol);
-      if (pos) {
-        try {
-          await _executeSellPosition(cfg, pos, sig.reason);
-        } catch (e) { console.error(`[Crypto] Error SELL ${sig.symbol}:`, e.message); }
+      if (!pos) continue;
+      const curPrice = currentPrices[pos.symbol] || pos.current_price || pos.entry_price;
+      const pnlPct = ((curPrice - pos.entry_price) / pos.entry_price) * 100;
+      const slThreshold = -(cfg.stop_loss_pct || 3);
+      if (pnlPct > slThreshold) {
+        console.log(`[Crypto] ❌ BLOQUEADO SELL AI ${sig.symbol}: PnL ${pnlPct.toFixed(1)}% > SL ${slThreshold}% — ventas solo por SL/TP/trailing`);
+        continue;
       }
+      try {
+        await _executeSellPosition(cfg, pos, sig.reason);
+      } catch (e) { console.error(`[Crypto] Error SELL ${sig.symbol}:`, e.message); }
     }
 
     // Paso B: Si vendimos algo, re-leer balance FRESCO
@@ -545,8 +563,9 @@ async function _executeSellPosition(cfg, pos, reason) {
               const coin = pos.symbol.split('/')[0];
               const realQty = bal[coin]?.free || 0;
               if (realQty > 0 && (realQty * price) >= 5) {
-                console.log(`[Crypto] Vendiendo balance real: ${realQty} ${coin} (posición decía ${pos.quantity})`);
-                await createOrder(keyInfo.user_id, keyInfo.id, pos.symbol, 'sell', parseFloat(realQty.toFixed(6)));
+                const sellQty = formatAmount(pos.symbol, realQty) || parseFloat(realQty.toFixed(6));
+                console.log(`[Crypto] Vendiendo balance real: ${sellQty} ${coin} (posición decía ${pos.quantity})`);
+                await createOrder(keyInfo.user_id, keyInfo.id, pos.symbol, 'sell', sellQty);
                 sold = true;
               } else {
                 console.warn(`[Crypto] ${coin} real: ${realQty} (muy poco) — cerrando posición`);

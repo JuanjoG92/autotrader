@@ -428,4 +428,26 @@ async function checkNewListings() {
   }
 }
 
-module.exports = { getBalances, getTicker, getOHLCV, createOrder, testConnection, getExchangeForUser, getTopPairs, getTopGainers, checkNewListings, getFirstBinanceBalance, resaveApiKey, SUPPORTED_EXCHANGES };
+// ── Market filters: LOT_SIZE, MIN_NOTIONAL via loadMarkets ──────────────────
+let _marketsLoaded = false;
+
+async function getMarketInfo(symbol) {
+  const exchange = _getSharedExchange();
+  if (!_marketsLoaded || !exchange.markets || !Object.keys(exchange.markets).length) {
+    await exchange.loadMarkets();
+    _marketsLoaded = true;
+  }
+  return exchange.markets[symbol] || null;
+}
+
+function formatAmount(symbol, amount) {
+  try {
+    const exchange = _getSharedExchange();
+    if (exchange.markets && exchange.markets[symbol]) {
+      return parseFloat(exchange.amountToPrecision(symbol, amount));
+    }
+  } catch {}
+  return amount;
+}
+
+module.exports = { getBalances, getTicker, getOHLCV, createOrder, testConnection, getExchangeForUser, getTopPairs, getTopGainers, checkNewListings, getFirstBinanceBalance, resaveApiKey, getMarketInfo, formatAmount, SUPPORTED_EXCHANGES };
