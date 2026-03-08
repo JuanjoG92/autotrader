@@ -164,9 +164,10 @@ function _getApiKeyInfo(cfg) {
 }
 
 async function _executeTrade(cfg, symbol, side, quantityUSD) {
-  let price = 0;
   const keyInfo = _getApiKeyInfo(cfg);
 
+  // 1. Obtener precio FRESCO justo ahora (no el del análisis de hace 5-30s)
+  let price = 0;
   if (keyInfo) {
     try {
       const exchange = getExchangeForUser(keyInfo.user_id, keyInfo.id);
@@ -175,31 +176,60 @@ async function _executeTrade(cfg, symbol, side, quantityUSD) {
     } catch {}
   }
   if (price <= 0) {
-    try {
-      const t = await getTicker(symbol);
-      price = t?.last || 0;
-    } catch {}
+    try { const t = await getTicker(symbol); price = t?.last || 0; } catch {}
   }
   if (price <= 0) throw new Error(`Sin precio para ${symbol}`);
 
-  // Binance minimum notional is $5 for most pairs, ensure we're above
-  const minNotional = 6; // $6 to be safe above Binance $5 minimum
+  // 2. Calcular cantidad respetando filtros de Binance
+  //    - NOTIONAL mínimo: $5-$10 según el par (usamos $8 de safety)
+  //    - LOT_SIZE: ajustar decimales según precio del par
+  const minNotional = 8; // $8 para superar el filtro NOTIONAL de Binance con margen
   const actualUSD = Math.max(quantityUSD, minNotional);
-  const quantity = parseFloat((actualUSD / price).toFixed(6));
+
+  // Ajustar decimales según el precio: coins baratas necesitan menos decimales en cantidad
+  let decimalPlaces;
+  if (price >= 10000) decimalPlaces = 5;     // BTC: 0.00014
+  else if (price >= 100) decimalPlaces = 4;  // ETH/SOL: 0.0721
+  else if (price >= 1) decimalPlaces = 2;    // ALCX/LINK: 0.84
+  else if (price >= 0.01) decimalPlaces = 0; // DOGE/ADA: 16
+  else decimalPlaces = 0;                    // SHIB: 100000
+
+  let quantity = parseFloat((actualUSD / price).toFixed(decimalPlaces));
+  // Asegurar que cantidad * precio >= minNotional
+  if (quantity * price < 5) {
+    quantity = parseFloat((6 / price).toFixed(decimalPlaces));
+  }
   if (quantity <= 0) throw new Error(`Cantidad muy baja para ${symbol}`);
 
+  // 3. Ejecutar en Binance (MARKET order = compra al precio actual del mercado)
+  //    No importa si el precio cambió 0.1% — la orden MARKET se ejecuta al instante
   let order = null;
   let mode = 'PAPER';
+  let fillPrice = price; // precio real de ejecución
 
   if (keyInfo) {
-    // Retry up to 2 times on timeout/network errors
     for (let attempt = 1; attempt <= 2; attempt++) {
       try {
         order = await createOrder(keyInfo.user_id, keyInfo.id, symbol, side.toLowerCase(), quantity);
         mode = 'LIVE';
+        // Si Binance devuelve el precio real de ejecución, usarlo
+        if (order?.average) fillPrice = order.average;
+        else if (order?.price && order.price > 0) fillPrice = order.price;
         break;
       } catch (e) {
         const msg = e.message || '';
+        // NOTIONAL: monto muy bajo → reintentar con más cantidad
+        if (msg.includes('NOTIONAL') && attempt === 1) {
+          console.warn(`[Crypto] ${symbol} NOTIONAL filter — subiendo a $${actualUSD * 1.5}`);
+          quantity = parseFloat(((actualUSD * 1.5) / price).toFixed(decimalPlaces));
+          continue;
+        }
+        // LOT_SIZE: cantidad inválida → ajustar decimales
+        if (msg.includes('LOT_SIZE') && attempt === 1) {
+          console.warn(`[Crypto] ${symbol} LOT_SIZE filter — ajustando decimales`);
+          quantity = Math.max(1, Math.floor(actualUSD / price));
+          continue;
+        }
         if (attempt < 2 && (msg.includes('timed out') || msg.includes('ETIMEDOUT') || msg.includes('ECONNRESET'))) {
           console.warn(`[Crypto] Orden timeout intento ${attempt}, reintentando...`);
           await new Promise(r => setTimeout(r, 2000));
@@ -211,8 +241,8 @@ async function _executeTrade(cfg, symbol, side, quantityUSD) {
     }
   }
 
-  console.log(`[Crypto] ${mode} ${side} ${symbol}: ${quantity} @ $${price} (~$${actualUSD})`);
-  return { order: order || { id: 'PAPER-' + Date.now() }, price, quantity, mode };
+  console.log(`[Crypto] ${mode} ${side} ${symbol}: ${quantity} @ $${fillPrice} (~$${(quantity * fillPrice).toFixed(2)})`);
+  return { order: order || { id: 'PAPER-' + Date.now() }, price: fillPrice, quantity, mode };
 }
 
 // ── AI Análisis ───────────────────────────────────────────────────────────────
@@ -401,9 +431,9 @@ async function monitorPositions() {
 
   for (const pos of positions) {
     try {
-      // Skip positions younger than 10 minutes (let them stabilize)
+      // Skip positions younger than 2 minutes (dejar que se procese la orden)
       const posAge = Date.now() - new Date(pos.created_at + 'Z').getTime();
-      if (posAge < 10 * 60 * 1000) continue;
+      if (posAge < 2 * 60 * 1000) continue;
 
       const ticker = await getTicker(pos.symbol);
       const price = ticker?.last || 0;
@@ -540,11 +570,18 @@ function getStatus() {
   return {
     enabled: !!cfg.enabled,
     openPositions: positions.length,
-    positions: positions.map(p => ({
-      symbol: p.symbol, qty: p.quantity, entry: p.entry_price,
-      current: p.current_price, sl: p.stop_loss, tp: p.take_profit,
-      pnlPct: p.current_price ? (((p.current_price - p.entry_price) / p.entry_price) * 100).toFixed(1) + '%' : 'N/A',
-    })),
+    positions: positions.map(p => {
+      // Si no tiene precio actual, usar el de entrada como fallback
+      const current = p.current_price || p.entry_price;
+      const pnlPct = current > 0 && p.entry_price > 0
+        ? (((current - p.entry_price) / p.entry_price) * 100).toFixed(1) + '%'
+        : 'N/A';
+      return {
+        symbol: p.symbol, qty: p.quantity, entry: p.entry_price,
+        current, sl: p.stop_loss, tp: p.take_profit, side: p.side, pnlPct,
+        mode: (p.order_id && p.order_id.startsWith('PAPER')) ? 'PAPER' : 'LIVE',
+      };
+    }),
     config: { max_usd: cfg.max_per_trade_usd, risk: cfg.risk_level, sl: cfg.stop_loss_pct, tp: cfg.take_profit_pct },
     lastAnalysis: _lastAnalysis,
   };
