@@ -60,7 +60,7 @@ function getOpenPositions() {
 function closePosition(id, pnl, reason) {
   getDB().prepare(
     "UPDATE crypto_positions SET status = 'CLOSED', pnl = ?, reason = reason || ' | ' || ?, closed_at = CURRENT_TIMESTAMP WHERE id = ?"
-  ).run(pnl || 0, reason || 'Cerrada', id);
+  ).run(typeof pnl === 'number' ? pnl : 0, reason || 'Cerrada', id);
 }
 
 function getPositionHistory(limit) {
@@ -534,39 +534,41 @@ async function monitorPositions() {
 async function _executeSellPosition(cfg, pos, reason) {
   try {
     const ticker = await getTicker(pos.symbol);
-    const price = ticker?.last || pos.current_price || pos.entry_price;
-    const pnl = (price - pos.entry_price) * pos.quantity;
+    const tickerPrice = ticker?.last || pos.current_price || pos.entry_price;
+    let sellPrice = tickerPrice;
 
     const keyInfo = _getApiKeyInfo(cfg);
     let sold = false;
 
     if (keyInfo) {
-      // Try selling with retry
       for (let attempt = 1; attempt <= 2; attempt++) {
         try {
-          await createOrder(keyInfo.user_id, keyInfo.id, pos.symbol, 'sell', pos.quantity);
+          const sellQty = formatAmount(pos.symbol, pos.quantity) || pos.quantity;
+          const order = await createOrder(keyInfo.user_id, keyInfo.id, pos.symbol, 'sell', sellQty);
           sold = true;
+          if (order?.average) sellPrice = order.average;
+          else if (order?.price && order.price > 0) sellPrice = order.price;
           break;
         } catch (e) {
           const msg = e.message || '';
 
-          // NOTIONAL: amount too small for Binance ($5 min) — close position, nothing to sell
           if (msg.includes('NOTIONAL')) {
-            console.warn(`[Crypto] ${pos.symbol} monto muy bajo para vender ($${(pos.quantity * price).toFixed(2)}) — cerrando posición`);
+            console.warn(`[Crypto] ${pos.symbol} monto muy bajo para vender ($${(pos.quantity * tickerPrice).toFixed(2)}) — cerrando posición`);
             break;
           }
 
-          // Insufficient balance: position qty doesn't match Binance — try selling actual balance
           if (msg.includes('insufficient') || msg.includes('balance')) {
             try {
               const bal = await getBalances(keyInfo.user_id, keyInfo.id);
               const coin = pos.symbol.split('/')[0];
               const realQty = bal[coin]?.free || 0;
-              if (realQty > 0 && (realQty * price) >= 5) {
-                const sellQty = formatAmount(pos.symbol, realQty) || parseFloat(realQty.toFixed(6));
-                console.log(`[Crypto] Vendiendo balance real: ${sellQty} ${coin} (posición decía ${pos.quantity})`);
-                await createOrder(keyInfo.user_id, keyInfo.id, pos.symbol, 'sell', sellQty);
+              if (realQty > 0 && (realQty * tickerPrice) >= 5) {
+                const adjQty = formatAmount(pos.symbol, realQty) || parseFloat(realQty.toFixed(6));
+                console.log(`[Crypto] Vendiendo balance real: ${adjQty} ${coin} (posición decía ${pos.quantity})`);
+                const order = await createOrder(keyInfo.user_id, keyInfo.id, pos.symbol, 'sell', adjQty);
                 sold = true;
+                if (order?.average) sellPrice = order.average;
+                else if (order?.price && order.price > 0) sellPrice = order.price;
               } else {
                 console.warn(`[Crypto] ${coin} real: ${realQty} (muy poco) — cerrando posición`);
               }
@@ -574,7 +576,6 @@ async function _executeSellPosition(cfg, pos, reason) {
             break;
           }
 
-          // Timeout: retry
           if (attempt < 2 && (msg.includes('timed out') || msg.includes('ETIMEDOUT'))) {
             console.warn(`[Crypto] Sell timeout intento ${attempt}, reintentando...`);
             await new Promise(r => setTimeout(r, 2000));
@@ -587,12 +588,19 @@ async function _executeSellPosition(cfg, pos, reason) {
       }
     }
 
-    closePosition(pos.id, sold ? pnl : 0, sold ? reason : `Cerrada (${reason})`);
-    console.log(`[Crypto] ${sold ? '💰' : '📝'} SELL ${pos.symbol} x${pos.quantity} @ $${price} | PnL: $${(sold ? pnl : 0).toFixed(2)} | ${reason}`);
+    // PnL con precio REAL de ejecución + fees de Binance (0.1% por lado)
+    const grossPnl = (sellPrice - pos.entry_price) * pos.quantity;
+    const buyFee = pos.entry_price * pos.quantity * 0.001;
+    const sellFee = sold ? sellPrice * pos.quantity * 0.001 : 0;
+    const netPnl = grossPnl - buyFee - sellFee;
+
+    // Siempre registrar PnL real (incluso si la venta falló)
+    closePosition(pos.id, netPnl, sold ? reason : `Cerrada sin venta (${reason})`);
+    console.log(`[Crypto] ${sold ? '💰' : '📝'} SELL ${pos.symbol} x${pos.quantity} @ $${sellPrice} | PnL: $${netPnl.toFixed(2)} (fees: -$${(buyFee + sellFee).toFixed(2)}) | ${reason}`);
 
     if (_broadcastFn) _broadcastFn({
       type: 'crypto_sell', symbol: pos.symbol, quantity: pos.quantity,
-      entry: pos.entry_price, exit: price, pnl: sold ? pnl : 0, reason,
+      entry: pos.entry_price, exit: sellPrice, pnl: netPnl, reason,
       timestamp: new Date().toISOString(),
     });
   } catch (e) {

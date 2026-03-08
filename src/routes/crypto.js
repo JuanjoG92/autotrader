@@ -56,15 +56,14 @@ router.get('/history', (req, res) => {
 router.get('/summary', (req, res) => {
   const db = getDB();
   const open = db.prepare("SELECT COUNT(*) as count FROM crypto_positions WHERE status = 'OPEN'").get();
-  const closed = db.prepare("SELECT COUNT(*) as count, SUM(pnl) as total_pnl FROM crypto_positions WHERE status = 'CLOSED'").get();
-  const total = db.prepare("SELECT COUNT(*) as count FROM crypto_positions").get();
-  // Only LIVE trades (not paper)
-  const live = db.prepare("SELECT COUNT(*) as count, SUM(entry_price * quantity) as volume FROM crypto_positions WHERE order_id NOT LIKE 'PAPER%'").get();
+  const closed = db.prepare("SELECT COUNT(*) as count, SUM(pnl) as total_pnl FROM crypto_positions WHERE status = 'CLOSED' AND order_id NOT LIKE 'PAPER%'").get();
+  const total = db.prepare("SELECT COUNT(*) as count FROM crypto_positions WHERE order_id NOT LIKE 'PAPER%'").get();
+  const live = db.prepare("SELECT COUNT(*) as count, ROUND(SUM(entry_price * quantity), 2) as volume FROM crypto_positions WHERE order_id NOT LIKE 'PAPER%'").get();
   res.json({
     open_positions: open?.count || 0,
     closed_positions: closed?.count || 0,
     total_positions: total?.count || 0,
-    total_pnl: closed?.total_pnl || 0,
+    total_pnl: Math.round((closed?.total_pnl || 0) * 100) / 100,
     live_trades: live?.count || 0,
     live_volume: live?.volume || 0,
   });
