@@ -16,7 +16,6 @@ const BASE_CRYPTOS = ['BTC/USDT', 'ETH/USDT', 'BNB/USDT', 'SOL/USDT'];
 
 let _timer = null;
 let _monitorTimer = null;
-let _scalperTimer = null;
 let _broadcastFn = null;
 let _lastAnalysis = null; // Last AI analysis for dashboard
 let _lastMarketPrices = {}; // Cache: últimos precios para detectar cambios
@@ -1022,7 +1021,6 @@ function init(broadcastFn) {
   if (_timer) clearInterval(_timer);
   if (_monitorTimer) clearInterval(_monitorTimer);
   if (_sniperTimer) clearInterval(_sniperTimer);
-  if (_scalperTimer) clearInterval(_scalperTimer);
 
   _timer = setInterval(async () => {
     try { await runAnalysis(); } catch (e) { console.error('[Crypto]', e.message); }
@@ -1037,12 +1035,7 @@ function init(broadcastFn) {
     try { await sniperNewListings(); } catch (e) { console.error('[Crypto] Sniper:', e.message); }
   }, 60 * 1000);
 
-  // Scalper: detecta subidas en tiempo real cada 60 seg
-  _scalperTimer = setInterval(async () => {
-    try { await runScalper(); } catch (e) { console.error('[Scalper]', e.message); }
-  }, 60 * 1000);
-
-  console.log(`[Crypto] Iniciado — AI cada ${cfg.analysis_interval_min || 3}min, monitor 30s, scalper+sniper 1min`);
+  console.log(`[Crypto] Iniciado — AI cada ${cfg.analysis_interval_min || 3}min, monitor 30s, sniper 1min`);
 
   // Sincronizar wallet de Binance al iniciar (detectar criptos manuales no trackeadas)
   setTimeout(async () => {
