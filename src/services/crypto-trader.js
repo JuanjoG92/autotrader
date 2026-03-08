@@ -312,17 +312,28 @@ async function runAnalysis() {
   let balanceCtx = 'USDT libre: $0 (sin conexión)';
   let availableUSDT = 0;
   if (balanceResult) {
+    // Calcular capital TOTAL (USDT + valor de todas las criptos)
     availableUSDT = balanceResult.USDT?.free || 0;
-    const entries = Object.entries(balanceResult).filter(([k, v]) => v.total > 0 && k !== 'USDT').slice(0, 5);
-    balanceCtx = `USDT libre: $${availableUSDT.toFixed(2)}`;
-    if (entries.length) balanceCtx += ' | ' + entries.map(([k, v]) => `${k}: ${v.total}`).join(', ');
-    // Log detallado del balance para debug
-    console.log(`[Crypto] 💰 Balance Binance: USDT=$${availableUSDT.toFixed(2)} | ${entries.map(([k, v]) => `${k}=${v.total}`).join(', ') || 'sin otros activos'}`);
+    let totalPortfolio = availableUSDT;
+    const holdings = [];
+    for (const [coin, info] of Object.entries(balanceResult)) {
+      if (coin === 'USDT' || coin === 'ARS' || !info.total || info.total <= 0) continue;
+      const pairPrice = currentPrices[coin + '/USDT'] || 0;
+      const val = info.total * pairPrice;
+      if (val > 0.5) {
+        totalPortfolio += val;
+        holdings.push(`${coin}:$${val.toFixed(1)}`);
+      }
+    }
+    balanceCtx = `USDT libre: $${availableUSDT.toFixed(2)} | Portfolio total: ~$${totalPortfolio.toFixed(2)}`;
+    if (holdings.length) balanceCtx += ' | ' + holdings.join(', ');
+    console.log(`[Crypto] 💰 USDT=$${availableUSDT.toFixed(2)} | Total=$${totalPortfolio.toFixed(2)} | ${holdings.join(', ') || 'solo USDT'}`);
   } else {
     console.warn('[Crypto] ⚠️ No se pudo leer balance de Binance');
   }
 
-  const positionSize = Math.max(5, Math.min(availableUSDT * 0.20, availableUSDT - 2));
+  // Usar TODO el USDT disponible para operar (no reservar %)
+  const positionSize = Math.max(8, Math.min(availableUSDT * 0.35, 50));
 
   // Prompt compacto con top gainers dinámicos
   const prompt = `CRYPTO TRADING — Binance Spot — FOCO EN TOP GAINERS
@@ -408,9 +419,9 @@ JSON:
         }
       }
 
-      const tradeAmount = Math.min(sig.amount_usd || positionSize, availableUSDT * 0.40);
+      const tradeAmount = Math.min(sig.amount_usd || positionSize, availableUSDT - 1);
       if (tradeAmount < 6) {
-        console.log(`[Crypto] Skip ${sig.symbol} — saldo insuficiente ($${availableUSDT.toFixed(2)})`);
+        console.log(`[Crypto] Skip ${sig.symbol} — USDT libre: $${availableUSDT.toFixed(2)} (necesita >$6)`);
         continue;
       }
 
