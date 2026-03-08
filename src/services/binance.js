@@ -222,11 +222,12 @@ async function getTopPairs() {
   }
 }
 
-// ── Top gainers: criptos que más suben en 24h (dinámico) ──
-// Filtra: solo /USDT, volumen >$1M, precio >$0.01, cambio >0%
+// ── Top gainers: MOMENTUM SCORE (no solo % 24h) ──────────────────────────────
+// Prioriza criptos con momentum ACTIVO: volumen alto, subida moderada (5-30%),
+// precio cerca del máximo del día (pump no terminó)
 let _gainersCache = null;
 let _gainersCacheTs = 0;
-const GAINERS_CACHE_TTL = 5 * 60 * 1000; // 5 min cache
+const GAINERS_CACHE_TTL = 3 * 60 * 1000; // 3 min cache (más fresco para momentum)
 
 async function getTopGainers(limit) {
   const now = Date.now();
@@ -243,23 +244,44 @@ async function getTopGainers(limit) {
         if (!t.symbol || !t.symbol.endsWith('/USDT')) return false;
         if (t.symbol.includes(':') || t.symbol.includes('UP/') || t.symbol.includes('DOWN/')) return false;
         if (!t.last || t.last <= 0.01) return false;
-        if (!t.quoteVolume || t.quoteVolume < 1000000) return false; // >$1M volumen
-        if (!t.percentage || t.percentage <= 0) return false;          // solo en alza
+        if (!t.quoteVolume || t.quoteVolume < 1000000) return false;
+        if (!t.percentage || t.percentage <= 2) return false; // mínimo +2%
         return true;
       })
-      .map(t => ({
-        symbol: t.symbol,
-        price: t.last,
-        change24h: t.percentage || 0,
-        volume: t.quoteVolume || 0,
-        high: t.high || 0,
-        low: t.low || 0,
-      }))
-      .sort((a, b) => b.change24h - a.change24h);
+      .map(t => {
+        const change = t.percentage || 0;
+        const high = t.high || t.last;
+        const dropFromHigh = high > 0 ? ((high - t.last) / high) * 100 : 0;
+        // MOMENTUM SCORE:
+        // - Subida 5-30% = zona óptima (multiplicador alto)
+        // - Subida >50% = pump ya terminó (penalización fuerte)
+        // - Precio cerca del máximo = pump activo (bonus)
+        // - Volumen alto = momentum real (bonus)
+        let changeFactor;
+        if (change >= 5 && change <= 15)       changeFactor = 3.0;  // ZONA IDEAL: inicio de tendencia
+        else if (change > 15 && change <= 30)  changeFactor = 2.0;  // buena, pero más riesgo
+        else if (change > 30 && change <= 50)  changeFactor = 1.0;  // arriesgada
+        else if (change > 50)                  changeFactor = 0.3;  // pump extremo — evitar
+        else                                   changeFactor = 1.5;  // 2-5%: muy temprano
+        const proximityFactor = dropFromHigh < 2 ? 2.0 : dropFromHigh < 5 ? 1.5 : dropFromHigh < 10 ? 1.0 : 0.5;
+        const volumeFactor = Math.min(Math.log10(t.quoteVolume / 1000000) + 1, 3); // log scale del volumen
+        const momentumScore = changeFactor * proximityFactor * volumeFactor;
+        return {
+          symbol: t.symbol,
+          price: t.last,
+          change24h: change,
+          volume: t.quoteVolume || 0,
+          high, low: t.low || 0,
+          dropFromHigh: Math.round(dropFromHigh * 10) / 10,
+          momentumScore: Math.round(momentumScore * 100) / 100,
+        };
+      })
+      .sort((a, b) => b.momentumScore - a.momentumScore); // Ordenar por MOMENTUM, no por %
 
     _gainersCache = gainers;
     _gainersCacheTs = now;
-    console.log(`[Binance] Top gainers: ${gainers.length} en alza, top5: ${gainers.slice(0, 5).map(g => g.symbol + ' +' + g.change24h.toFixed(1) + '%').join(', ')}`);
+    const top5 = gainers.slice(0, 5).map(g => `${g.symbol} +${g.change24h.toFixed(0)}% M:${g.momentumScore}`).join(', ');
+    console.log(`[Binance] Momentum: ${gainers.length} en alza, top5: ${top5}`);
     return gainers.slice(0, limit || 10);
   } catch (e) {
     console.error('[Binance] getTopGainers error:', (e.message || '').substring(0, 80));

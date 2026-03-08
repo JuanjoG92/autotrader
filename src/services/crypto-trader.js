@@ -102,7 +102,9 @@ async function getMarketData(cfg) {
       const t = allData.find(d => d.symbol === pair);
       if (!t || t.price <= 0) continue;
       prices[pair] = t.price;
-      const line = `${pair}: $${t.price.toFixed(t.price < 1 ? 4 : 2)} | 24h: ${t.change24h >= 0 ? '+' : ''}${t.change24h.toFixed(1)}% | Vol: $${Math.round(t.volume / 1e6)}M`;
+      const momentum = t.momentumScore ? ` | Momentum: ${t.momentumScore}` : '';
+      const drop = t.dropFromHigh !== undefined ? ` | Drop: -${t.dropFromHigh}%` : '';
+      const line = `${pair}: $${t.price.toFixed(t.price < 1 ? 4 : 2)} | 24h: ${t.change24h >= 0 ? '+' : ''}${t.change24h.toFixed(1)}% | Vol: $${Math.round(t.volume / 1e6)}M${momentum}${drop}`;
       if (BASE_CRYPTOS.includes(pair)) {
         basePairs.push(line);
       } else {
@@ -596,6 +598,14 @@ async function monitorPositions() {
       getDB().prepare('UPDATE crypto_positions SET current_price = ? WHERE id = ?').run(price, pos.id);
 
       const pnlPct = ((price - pos.entry_price) / pos.entry_price) * 100;
+      const posAgeMin = posAge / 60000;
+
+      // VENTA RÁPIDA: si cae >3% en los primeros 5 min, la entrada fue mala → salir YA
+      if (posAgeMin < 5 && pnlPct < -3) {
+        console.log(`[Crypto] ⚡ VENTA RÁPIDA ${pos.symbol}: ${pnlPct.toFixed(1)}% en ${posAgeMin.toFixed(0)}min — mala entrada`);
+        await _executeSellPosition(cfg, pos, `Venta rápida: ${pnlPct.toFixed(1)}% en ${posAgeMin.toFixed(0)}min`);
+        continue;
+      }
 
       // Stop-Loss
       if (pos.stop_loss > 0 && price <= pos.stop_loss) {
@@ -788,12 +798,12 @@ function init(broadcastFn) {
     try { await monitorPositions(); } catch (e) { console.error('[Crypto] Monitor:', e.message); }
   }, 30 * 1000);
 
-  // Sniper: revisa nuevos listings cada 2 minutos
+  // Sniper: revisa nuevos listings cada 1 minuto (velocidad es clave)
   _sniperTimer = setInterval(async () => {
     try { await sniperNewListings(); } catch (e) { console.error('[Crypto] Sniper:', e.message); }
-  }, 2 * 60 * 1000);
+  }, 60 * 1000);
 
-  console.log(`[Crypto] AI Trader iniciado — análisis cada ${cfg.analysis_interval_min || 3} min, monitor cada 30s, sniper cada 2min`);
+  console.log(`[Crypto] AI Trader iniciado — análisis cada ${cfg.analysis_interval_min || 3} min, monitor cada 30s, sniper cada 1min`);
 
   // Primer análisis inmediato (10s para que cargue todo)
   setTimeout(async () => {
