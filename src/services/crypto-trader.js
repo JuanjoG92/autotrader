@@ -145,7 +145,7 @@ function _marketChangedEnough(currentPrices) {
     const prev = _lastMarketPrices[symbol];
     if (!prev) return true; // Par nuevo
     const changePct = Math.abs((price - prev) / prev) * 100;
-    if (changePct >= 1.0) return true; // Algún par cambió >1%
+    if (changePct >= 0.3) return true; // Algún par cambió >0.3%
   }
   return false; // Nada cambió significativamente
 }
@@ -367,15 +367,15 @@ JSON:
         continue;
       }
 
-      // Cooldown: no comprar si vendimos/cerramos este par hace menos de 30 min
+      // Cooldown: no recomprar inmediatamente tras vender (evita loop)
       if (sig.action === 'BUY') {
         const recent = getDB().prepare(
           "SELECT created_at FROM crypto_positions WHERE symbol = ? AND status = 'CLOSED' ORDER BY id DESC LIMIT 1"
         ).get(sig.symbol);
         if (recent) {
           const closedAgo = Date.now() - new Date(recent.created_at + 'Z').getTime();
-          if (closedAgo < 30 * 60 * 1000) {
-            console.log(`[Crypto] Skip ${sig.symbol} — operado hace ${Math.round(closedAgo / 60000)} min (cooldown 30min)`);
+          if (closedAgo < 5 * 60 * 1000) {
+            console.log(`[Crypto] Skip ${sig.symbol} — operado hace ${Math.round(closedAgo / 60000)} min (cooldown 5min)`);
             continue;
           }
         }
@@ -605,7 +605,7 @@ let _sniperTimer = null;
 function init(broadcastFn) {
   _broadcastFn = broadcastFn;
   const cfg = getConfig();
-  const intervalMs = (cfg.analysis_interval_min || 15) * 60 * 1000;
+  const intervalMs = (cfg.analysis_interval_min || 5) * 60 * 1000;
 
   if (_timer) clearInterval(_timer);
   if (_monitorTimer) clearInterval(_monitorTimer);
@@ -624,7 +624,7 @@ function init(broadcastFn) {
     try { await sniperNewListings(); } catch (e) { console.error('[Crypto] Sniper:', e.message); }
   }, 2 * 60 * 1000);
 
-  console.log(`[Crypto] AI Trader iniciado — análisis cada ${cfg.analysis_interval_min || 15} min, monitor cada 30s, sniper cada 2min`);
+  console.log(`[Crypto] AI Trader iniciado — análisis cada ${cfg.analysis_interval_min || 5} min, monitor cada 30s, sniper cada 2min`);
 
   // Primer análisis tras 20s
   setTimeout(async () => {
