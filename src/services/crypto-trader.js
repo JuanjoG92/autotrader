@@ -332,25 +332,29 @@ async function runAnalysis() {
     console.warn('[Crypto] ⚠️ No se pudo leer balance de Binance');
   }
 
-  // Usar TODO el USDT disponible para operar (no reservar %)
-  const positionSize = Math.max(8, Math.min(availableUSDT * 0.35, 50));
+  // Invertir FUERTE: 50% del capital en cada top gainer (2 posiciones = 100%)
+  const positionSize = Math.max(8, Math.floor(availableUSDT * 0.50));
 
-  // Prompt compacto con top gainers dinámicos
-  const prompt = `CRYPTO TRADING — Binance Spot — FOCO EN TOP GAINERS
+  // Prompt agresivo: invertir TODO en los top gainers
+  const prompt = `CRYPTO TRADER AGRESIVO — Binance Spot
 
-MERCADO (incluye top gainers 24h dinámicos de Binance):
+MERCADO:
 ${marketCtx}
 
-BALANCE: ${balanceCtx} | Operación: ~$${positionSize.toFixed(0)} | Riesgo: ${cfg.risk_level} | SL:${cfg.stop_loss_pct}% TP:${cfg.take_profit_pct}%
+BALANCE: ${balanceCtx} | USDT libre: $${availableUSDT.toFixed(0)} | Invertir ~$${positionSize} por operación
 
 POSICIONES: ${posCtx}
 
 NOTICIAS: ${newsCtx}
-${ragCtx ? `\nESTRATEGIA (RAG): ${ragCtx.substring(0, 500)}` : ''}
-REGLAS: Comisión 0.2% round-trip (operar si >0.5%). PRIORIZAR top gainers con momentum fuerte y volumen alto. IMPORTANTE: Si hay posiciones abiertas estancadas (0% o negativas) y hay mejores oportunidades en gainers, VENDER las estancadas para liberar capital. Rotar capital hacia las que más suben. Max 25% capital/operación. Cualquier par /USDT listado arriba es válido. No comprar duplicados. Confidence 0.60-0.95 (ejecutar >0.70). Incluir amount_usd.
+REGLAS ESTRICTAS:
+- COMPRAR las 2 criptos con mayor subida 24h y volumen >$3M. Invertir FUERTE ($${positionSize} cada una).
+- NO vender posiciones que estén en ganancia o recién compradas. Solo SELL si bajan más de -2% desde entrada.
+- Incluir amount_usd con el monto real a invertir ($${positionSize} por señal).
+- Cualquier par /USDT del mercado listado arriba es válido.
+- Confidence alta (>0.80) para compras de top gainers.
 
 JSON:
-{"signals":[{"symbol":"XXX/USDT","action":"BUY|SELL|HOLD","confidence":0.82,"amount_usd":10,"reason":"..."}],"analysis":"resumen breve","market_sentiment":"BULLISH|BEARISH|NEUTRAL","watchlist":["ETH/USDT"]}`;
+{"signals":[{"symbol":"XXX/USDT","action":"BUY|SELL|HOLD","confidence":0.85,"amount_usd":${positionSize},"reason":"..."}],"analysis":"breve","market_sentiment":"BULLISH|BEARISH|NEUTRAL","watchlist":[]}`;
 
   try {
     const res = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -359,7 +363,7 @@ JSON:
       body: JSON.stringify({
         model: OPENAI_MODEL, temperature: 0.2, max_tokens: 800,
         messages: [
-          { role: 'system', content: 'Eres un trader de criptomonedas experto. Analizas mercado + noticias para generar señales de trading. Conservador. JSON válido siempre.' },
+          { role: 'system', content: 'Eres un trader de criptomonedas agresivo y profesional. Tu objetivo es MAXIMIZAR ganancias comprando las criptos que más suben. Inviertes fuerte en los top gainers. JSON válido siempre.' },
           { role: 'user', content: prompt },
         ],
         response_format: { type: 'json_object' },
@@ -419,8 +423,8 @@ JSON:
         }
       }
 
-      const tradeAmount = Math.min(sig.amount_usd || positionSize, availableUSDT - 1);
-      if (tradeAmount < 6) {
+      const tradeAmount = Math.max(8, Math.min(sig.amount_usd || positionSize, availableUSDT - 2));
+      if (availableUSDT < 6) {
         console.log(`[Crypto] Skip ${sig.symbol} — USDT libre: $${availableUSDT.toFixed(2)} (necesita >$6)`);
         continue;
       }
@@ -635,7 +639,7 @@ let _sniperTimer = null;
 function init(broadcastFn) {
   _broadcastFn = broadcastFn;
   const cfg = getConfig();
-  const intervalMs = (cfg.analysis_interval_min || 5) * 60 * 1000;
+  const intervalMs = (cfg.analysis_interval_min || 3) * 60 * 1000;
 
   if (_timer) clearInterval(_timer);
   if (_monitorTimer) clearInterval(_monitorTimer);
@@ -654,12 +658,12 @@ function init(broadcastFn) {
     try { await sniperNewListings(); } catch (e) { console.error('[Crypto] Sniper:', e.message); }
   }, 2 * 60 * 1000);
 
-  console.log(`[Crypto] AI Trader iniciado — análisis cada ${cfg.analysis_interval_min || 5} min, monitor cada 30s, sniper cada 2min`);
+  console.log(`[Crypto] AI Trader iniciado — análisis cada ${cfg.analysis_interval_min || 3} min, monitor cada 30s, sniper cada 2min`);
 
-  // Primer análisis tras 20s
+  // Primer análisis inmediato (10s para que cargue todo)
   setTimeout(async () => {
     try { await runAnalysis(); } catch (e) { console.error('[Crypto] Inicial:', e.message); }
-  }, 20000);
+  }, 10000);
 }
 
 function getStatus() {
