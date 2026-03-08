@@ -4,16 +4,15 @@
 
 const { getDB }          = require('../models/db');
 const { getOpenAIToken } = require('./ai-token');
-const { getBalances, getTicker, getTopPairs, createOrder, getExchangeForUser } = require('./binance');
+const { getBalances, getTicker, getTopPairs, getTopGainers, createOrder, getExchangeForUser } = require('./binance');
 const news               = require('./news-fetcher');
 const rag                = require('./rag');
 
 const OPENAI_MODEL = 'gpt-4o-mini';
 
-const TOP_CRYPTOS = [
-  'BTC/USDT', 'ETH/USDT', 'BNB/USDT', 'SOL/USDT', 'XRP/USDT',
-  'ADA/USDT', 'DOGE/USDT', 'AVAX/USDT', 'LINK/USDT', 'DOT/USDT',
-];
+// Base: siempre monitorear estas (referencia)
+const BASE_CRYPTOS = ['BTC/USDT', 'ETH/USDT', 'BNB/USDT', 'SOL/USDT'];
+// Las demás se eligen DINÁMICAMENTE según top gainers 24h en Binance
 
 let _timer = null;
 let _monitorTimer = null;
@@ -68,37 +67,60 @@ function getPositionHistory(limit) {
   return getDB().prepare('SELECT * FROM crypto_positions ORDER BY created_at DESC LIMIT ?').all(limit || 30);
 }
 
-// ── Datos de mercado (batch: 1 sola llamada a Binance) ───────────────────────
+// ── Datos de mercado (dinámico: base coins + top gainers 24h) ───────────
 
 async function getMarketData(cfg) {
   const rows = [];
   const prices = {};
+  let activePairs = [...BASE_CRYPTOS];
 
-  // Intentar batch (1 call en vez de 10 secuenciales — ahorra ~10s)
   try {
-    const keyInfo = _getApiKeyInfo(cfg);
-    let exchange;
-    if (keyInfo) {
-      exchange = getExchangeForUser(keyInfo.user_id, keyInfo.id);
+    // 1. Top gainers dinámicos de Binance (las que más suben hoy)
+    const gainers = await getTopGainers(8);
+    if (gainers.length > 0) {
+      // Agregar gainers que no estén en la lista base
+      for (const g of gainers) {
+        if (!activePairs.includes(g.symbol)) activePairs.push(g.symbol);
+      }
+      // Max 12 pares para no sobrecargar el prompt
+      activePairs = activePairs.slice(0, 12);
     }
-    // getTopPairs ya usa fetchTickers batch
+
+    // 2. Obtener datos de todos (base + gainers) en batch
     const topData = await getTopPairs();
-    if (topData && topData.length > 0) {
-      for (const pair of TOP_CRYPTOS) {
-        const t = topData.find(d => d.symbol === pair);
-        if (t && t.price > 0) {
-          prices[pair] = t.price;
-          rows.push(`${pair}: $${t.price.toFixed(2)} | 24h: ${t.change24h >= 0 ? '+' : ''}${t.change24h.toFixed(1)}% | Vol: $${Math.round(t.volume / 1e6)}M`);
-        }
+    // Merge: topData tiene 20 pares fijos, gainers tiene las dinámicas
+    const allData = [...(topData || [])];
+    for (const g of gainers) {
+      if (!allData.find(d => d.symbol === g.symbol)) allData.push(g);
+    }
+
+    // Separar en secciones: BASE y GAINERS
+    const basePairs = [];
+    const gainerPairs = [];
+
+    for (const pair of activePairs) {
+      const t = allData.find(d => d.symbol === pair);
+      if (!t || t.price <= 0) continue;
+      prices[pair] = t.price;
+      const line = `${pair}: $${t.price.toFixed(t.price < 1 ? 4 : 2)} | 24h: ${t.change24h >= 0 ? '+' : ''}${t.change24h.toFixed(1)}% | Vol: $${Math.round(t.volume / 1e6)}M`;
+      if (BASE_CRYPTOS.includes(pair)) {
+        basePairs.push(line);
+      } else {
+        gainerPairs.push(line);
       }
     }
+
+    if (basePairs.length) rows.push('BASE:', ...basePairs);
+    if (gainerPairs.length) rows.push('\nTOP GAINERS 24H (dinámico):', ...gainerPairs);
+
+    console.log(`[Crypto] ${activePairs.length} pares (${BASE_CRYPTOS.length} base + ${gainers.length} gainers)`);
   } catch (e) {
-    console.warn('[Crypto] Batch tickers falló, usando secuencial:', e.message?.substring(0, 60));
+    console.warn('[Crypto] Error market data:', e.message?.substring(0, 60));
   }
 
-  // Fallback secuencial si batch falló
+  // Fallback: si todo falló, usar base secuencial
   if (!rows.length) {
-    for (const pair of TOP_CRYPTOS) {
+    for (const pair of BASE_CRYPTOS) {
       try {
         const t = await getTicker(pair);
         if (t && t.last > 0) {
@@ -110,7 +132,7 @@ async function getMarketData(cfg) {
     }
   }
 
-  return { text: rows.join('\n') || 'Sin datos de mercado.', prices };
+  return { text: rows.join('\n') || 'Sin datos de mercado.', prices, activePairs };
 }
 
 // ── Cache: detectar si el mercado cambió lo suficiente ────────────────────────
@@ -220,7 +242,7 @@ async function runAnalysis() {
     rag.buildRAGContext('crypto trading strategy bitcoin risk management', false).catch(() => ''),
   ]);
 
-  const { text: marketCtx, prices: currentPrices } = marketResult;
+  const { text: marketCtx, prices: currentPrices, activePairs } = marketResult;
   console.log(`[Crypto] Datos obtenidos en ${Date.now() - t0}ms (paralelo)`);
 
   // ── Paso 2: Cache — si nada cambió >1%, saltar OpenAI ──
@@ -233,9 +255,9 @@ async function runAnalysis() {
   _lastMarketPrices = { ...currentPrices };
 
   // ── Paso 3: Armar contexto (ya tenemos todo, sin esperar) ──
-  const cryptoTickers = ['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'CRYPTO'];
-  const newsItems = news.getNewsForTickers(cryptoTickers, 6);
-  // Solo enviar noticias si cambiaron (las noticias se actualizan cada 30 min)
+  // Noticias: usar los tickers activos (dinámicos)
+  const newsTickers = (activePairs || BASE_CRYPTOS).map(p => p.split('/')[0]).concat(['CRYPTO']);
+  const newsItems = news.getNewsForTickers(newsTickers, 6);
   const newsHash = newsItems.map(n => n.title).join('|').substring(0, 200);
   let newsCtx;
   if (newsHash === _lastNewsHash && _lastAnalysis) {
@@ -263,10 +285,10 @@ async function runAnalysis() {
 
   const positionSize = Math.max(5, Math.min(availableUSDT * 0.20, availableUSDT - 2));
 
-  // Prompt compacto para reducir tokens
-  const prompt = `CRYPTO TRADING — Binance Spot
+  // Prompt compacto con top gainers dinámicos
+  const prompt = `CRYPTO TRADING — Binance Spot — FOCO EN TOP GAINERS
 
-MERCADO:
+MERCADO (incluye top gainers 24h dinámicos de Binance):
 ${marketCtx}
 
 BALANCE: ${balanceCtx} | Operación: ~$${positionSize.toFixed(0)} | Riesgo: ${cfg.risk_level} | SL:${cfg.stop_loss_pct}% TP:${cfg.take_profit_pct}%
@@ -275,10 +297,10 @@ POSICIONES: ${posCtx}
 
 NOTICIAS: ${newsCtx}
 ${ragCtx ? `\nESTRATEGIA (RAG): ${ragCtx.substring(0, 500)}` : ''}
-REGLAS: Comisión 0.2% round-trip (operar solo si >0.5%). No overtrading. HOLD si no hay oportunidad clara. Max 25% capital/operación. Solo /USDT Spot. No comprar duplicados. SELL si debilidad. Confidence 0.60-0.95 (ejecutar >0.75). Incluir amount_usd.
+REGLAS: Comisión 0.2% round-trip (operar si >0.5%). PRIORIZAR top gainers con momentum fuerte y volumen alto. No overtrading. HOLD si no hay oportunidad clara. Max 25% capital/operación. Cualquier par /USDT listado arriba es válido. No comprar duplicados. SELL si debilidad. Confidence 0.60-0.95 (ejecutar >0.75). Incluir amount_usd.
 
 JSON:
-{"signals":[{"symbol":"BTC/USDT","action":"BUY|SELL|HOLD","confidence":0.82,"amount_usd":10,"reason":"..."}],"analysis":"resumen breve","market_sentiment":"BULLISH|BEARISH|NEUTRAL","watchlist":["ETH/USDT"]}`;
+{"signals":[{"symbol":"XXX/USDT","action":"BUY|SELL|HOLD","confidence":0.82,"amount_usd":10,"reason":"..."}],"analysis":"resumen breve","market_sentiment":"BULLISH|BEARISH|NEUTRAL","watchlist":["ETH/USDT"]}`;
 
   try {
     const res = await fetch('https://api.openai.com/v1/chat/completions', {

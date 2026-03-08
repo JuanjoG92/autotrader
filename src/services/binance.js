@@ -219,6 +219,51 @@ async function getTopPairs() {
   }
 }
 
+// ── Top gainers: criptos que más suben en 24h (dinámico) ──
+// Filtra: solo /USDT, volumen >$1M, precio >$0.01, cambio >0%
+let _gainersCache = null;
+let _gainersCacheTs = 0;
+const GAINERS_CACHE_TTL = 5 * 60 * 1000; // 5 min cache
+
+async function getTopGainers(limit) {
+  const now = Date.now();
+  if (_gainersCache && (now - _gainersCacheTs) < GAINERS_CACHE_TTL) {
+    return _gainersCache.slice(0, limit || 10);
+  }
+
+  try {
+    const exchange = _getSharedExchange();
+    const allTickers = await exchange.fetchTickers();
+
+    const gainers = Object.values(allTickers)
+      .filter(t => {
+        if (!t.symbol || !t.symbol.endsWith('/USDT')) return false;
+        if (t.symbol.includes(':') || t.symbol.includes('UP/') || t.symbol.includes('DOWN/')) return false;
+        if (!t.last || t.last <= 0.01) return false;
+        if (!t.quoteVolume || t.quoteVolume < 1000000) return false; // >$1M volumen
+        if (!t.percentage || t.percentage <= 0) return false;          // solo en alza
+        return true;
+      })
+      .map(t => ({
+        symbol: t.symbol,
+        price: t.last,
+        change24h: t.percentage || 0,
+        volume: t.quoteVolume || 0,
+        high: t.high || 0,
+        low: t.low || 0,
+      }))
+      .sort((a, b) => b.change24h - a.change24h);
+
+    _gainersCache = gainers;
+    _gainersCacheTs = now;
+    console.log(`[Binance] Top gainers: ${gainers.length} en alza, top5: ${gainers.slice(0, 5).map(g => g.symbol + ' +' + g.change24h.toFixed(1) + '%').join(', ')}`);
+    return gainers.slice(0, limit || 10);
+  } catch (e) {
+    console.error('[Binance] getTopGainers error:', (e.message || '').substring(0, 80));
+    return _gainersCache ? _gainersCache.slice(0, limit || 10) : [];
+  }
+}
+
 // ── Balance cache (avoid slow proxy calls on every dashboard load) ──
 let _balanceCache = null;
 let _balanceCacheTs = 0;
@@ -328,4 +373,4 @@ function _getBinanceTime() {
   });
 }
 
-module.exports = { getBalances, getTicker, getOHLCV, createOrder, testConnection, getExchangeForUser, getTopPairs, getFirstBinanceBalance, resaveApiKey, SUPPORTED_EXCHANGES };
+module.exports = { getBalances, getTicker, getOHLCV, createOrder, testConnection, getExchangeForUser, getTopPairs, getTopGainers, getFirstBinanceBalance, resaveApiKey, SUPPORTED_EXCHANGES };
