@@ -399,19 +399,41 @@ function _getBinanceTime() {
 }
 
 // ── Detectar nuevos listings de Binance ──────────────────────────────────────
-// Compara lista actual de pares /USDT vs lista guardada. Si aparece uno nuevo → listing reciente
+// Usa fetchTickers (liviano, funciona con proxy) en vez de loadMarkets (pesado, falla)
+// Compara pares actuales vs conocidos. Nuevo par → listing reciente → comprar
 let _knownPairs = new Set();
 let _knownPairsLoaded = false;
+let _lastFullRefresh = 0;
 
 async function checkNewListings() {
   try {
     const exchange = _getSharedExchange();
-    await exchange.loadMarkets(true); // forzar refresh
-    const currentPairs = Object.keys(exchange.markets)
-      .filter(s => s.endsWith('/USDT') && !s.includes(':') && exchange.markets[s].active);
+    const now = Date.now();
+    let currentPairs;
+
+    // Cada 10 min: refresh completo con loadMarkets (para tener pares sin volumen)
+    if (!_knownPairsLoaded || (now - _lastFullRefresh) > 10 * 60 * 1000) {
+      try {
+        await exchange.loadMarkets(_knownPairsLoaded); // true solo si ya cargó antes
+        _lastFullRefresh = now;
+        currentPairs = Object.keys(exchange.markets)
+          .filter(s => s.endsWith('/USDT') && !s.includes(':') && exchange.markets[s].active);
+      } catch (e) {
+        // Si loadMarkets falla, usar fetchTickers como fallback (siempre funciona)
+        const allTickers = await exchange.fetchTickers();
+        currentPairs = Object.keys(allTickers)
+          .filter(s => s.endsWith('/USDT') && !s.includes(':'));
+      }
+    } else {
+      // Entre refreshes: usar fetchTickers (mucho más rápido y confiable)
+      const allTickers = await exchange.fetchTickers();
+      currentPairs = Object.keys(allTickers)
+        .filter(s => s.endsWith('/USDT') && !s.includes(':'));
+    }
+
+    if (!currentPairs || !currentPairs.length) return [];
 
     if (!_knownPairsLoaded) {
-      // Primera carga: guardar todos los pares actuales como "conocidos"
       _knownPairs = new Set(currentPairs);
       _knownPairsLoaded = true;
       console.log(`[Binance] Listings: ${_knownPairs.size} pares /USDT conocidos`);
@@ -420,22 +442,17 @@ async function checkNewListings() {
 
     // Detectar nuevos (están en current pero no en known)
     const newListings = currentPairs.filter(p => !_knownPairs.has(p));
-
-    // Actualizar la lista
     for (const p of currentPairs) _knownPairs.add(p);
 
     if (newListings.length > 0) {
       console.log(`[Binance] 🚀 NUEVO LISTING DETECTADO: ${newListings.join(', ')}`);
-
-      // Obtener datos del nuevo par
       const results = [];
       for (const symbol of newListings) {
         try {
           const ticker = await exchange.fetchTicker(symbol);
           if (ticker && ticker.last > 0) {
             results.push({
-              symbol,
-              price: ticker.last,
+              symbol, price: ticker.last,
               change24h: ticker.percentage || 0,
               volume: ticker.quoteVolume || 0,
               isNewListing: true,
@@ -445,7 +462,6 @@ async function checkNewListings() {
       }
       return results;
     }
-
     return [];
   } catch (e) {
     console.warn('[Binance] checkNewListings error:', (e.message || '').substring(0, 60));
