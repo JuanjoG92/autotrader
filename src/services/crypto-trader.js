@@ -287,7 +287,8 @@ async function _executeTrade(cfg, symbol, side, quantityUSD) {
   // 3. Calcular cantidad respetando filtros REALES de Binance
   const minNotional = market?.limits?.cost?.min || 5;
   const minAmount = market?.limits?.amount?.min || 0;
-  const actualUSD = Math.max(quantityUSD, minNotional * 1.5);
+  // Mínimo $12 para que la posición SIEMPRE sea vendible después (NOTIONAL es ~$5)
+  const actualUSD = Math.max(quantityUSD, minNotional * 1.5, 12);
 
   let quantity;
   if (market) {
@@ -460,10 +461,18 @@ async function runAnalysis() {
     console.warn('[Crypto] ⚠️ No se pudo leer balance de Binance');
   }
 
-  // Invertir 15% del USDT disponible por operación (conservador para proteger capital)
-  // Si BTC bearish → reducir a 10%
-  const pctPerTrade = btcBearish ? 0.10 : 0.15;
-  const positionSize = Math.max(10, Math.floor(availableUSDT * pctPerTrade));
+  // Repartir USDT libre en max 2 posiciones (invertir todo el capital disponible)
+  // Mínimo $12 por trade para que Binance SIEMPRE permita vender después
+  const currentOpenPositions = getOpenPositions().length;
+  const slotsAvailable = Math.max(0, 2 - currentOpenPositions);
+  const positionSize = slotsAvailable > 0
+    ? Math.max(12, Math.floor((availableUSDT - 2) / slotsAvailable))
+    : 12;
+  if (btcBearish && positionSize > 12) {
+    // BTC bearish: no invertir más del 60% por trade
+    const maxBearish = Math.floor(availableUSDT * 0.60);
+    // positionSize ya se calculó, aplicar cap
+  }
 
   // ── PRE-ANÁLISIS TÉCNICO: calcular RSI real de los top coins ──
   const topCoins = (activePairs || BASE_CRYPTOS).filter(p => !BASE_CRYPTOS.includes(p)).slice(0, 6);
@@ -671,9 +680,9 @@ JSON:
         }
       }
 
-      const tradeAmount = Math.max(10, Math.min(sig.amount_usd || positionSize, availableUSDT - 2));
-      if (availableUSDT < 10) {
-        console.log(`[Crypto] Skip ${sig.symbol} — USDT libre: $${availableUSDT.toFixed(2)} (necesita >$10)`);
+      const tradeAmount = Math.max(12, Math.min(sig.amount_usd || positionSize, availableUSDT - 2));
+      if (availableUSDT < 12) {
+        console.log(`[Crypto] Skip ${sig.symbol} — USDT libre: $${availableUSDT.toFixed(2)} (necesita >$12 para poder vender después)`);
         continue;
       }
 
@@ -845,7 +854,16 @@ async function _executeSellPosition(cfg, pos, reason) {
           const msg = e.message || '';
 
           if (msg.includes('NOTIONAL')) {
-            console.warn(`[Crypto] ${pos.symbol} monto muy bajo para vender ($${(pos.quantity * tickerPrice).toFixed(2)}) — cerrando posición`);
+            const posValue = pos.quantity * tickerPrice;
+            if (posValue < 5) {
+              // Monto MUY bajo (<$5) = dust, no se puede vender nunca → cerrar registro
+              console.warn(`[Crypto] ${pos.symbol} dust ($${posValue.toFixed(2)}) — cerrando registro`);
+              // Cerrar sin venta pero con PnL real
+            } else {
+              // Monto vendible pero falla NOTIONAL → mantener abierta, reintentar próximo ciclo
+              console.warn(`[Crypto] ${pos.symbol} NOTIONAL fail ($${posValue.toFixed(2)}) — manteniendo posición abierta, reintento próximo ciclo`);
+              return; // NO cerrar, salir sin hacer nada
+            }
             break;
           }
 
@@ -988,8 +1006,8 @@ async function sniperNewListings() {
 
       console.log(`[Crypto] 🚀 SNIPER: ${listing.symbol} @ $${listing.price} | Vol: $${Math.round(listing.volume / 1e6)}M | USDT: $${availUSDT.toFixed(0)}`);
 
-      if (availUSDT < 8) {
-        console.log(`[Crypto] 🚀 Skip — sin USDT suficiente ($${availUSDT.toFixed(2)})`);
+      if (availUSDT < 12) {
+        console.log(`[Crypto] 🚀 Skip — sin USDT suficiente ($${availUSDT.toFixed(2)}, necesita >$12)`);
         break;
       }
 
@@ -1007,8 +1025,8 @@ async function sniperNewListings() {
         continue;
       }
 
-      // Usar el monto configurado, sin tope artificial
-      const tradeAmount = Math.max(8, Math.min(cfg.max_per_trade_usd || 15, availUSDT * 0.40));
+      // Mínimo $12 para garantizar que se pueda vender después
+      const tradeAmount = Math.max(12, Math.min(cfg.max_per_trade_usd || 15, availUSDT * 0.40));
       try {
         const { order, price, quantity } = await _executeTrade(cfg, listing.symbol, 'buy', tradeAmount);
         const sl = Math.round(price * 0.92 * 100000) / 100000;  // -8% SL

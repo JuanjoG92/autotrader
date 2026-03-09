@@ -241,10 +241,9 @@ async function makeDecisions() {
     const bal = await getBalances(keyInfo.user_id, keyInfo.id);
     availUSDT = bal?.USDT?.free || 0;
   } catch {}
-  if (availUSDT < 10) return;
+  if (availUSDT < 14) return; // Mínimo $14 libre para garantizar trade vendible
 
-  const tradeAmount = Math.min(Math.floor(availUSDT * 0.40), 15);
-  if (tradeAmount < 6) return; // Mínimo $6 para cumplir NOTIONAL filters de Binance
+  const tradeAmount = Math.max(12, Math.min(Math.floor(availUSDT * 0.40), 15));
 
   // ── COMPRAR ──
   console.log(`[Scalper] 🎯 ${best.symbol} +${best.change.toFixed(1)}% en 5min | RSI=${rsi.toFixed(0)} | $${best.price} | Vol:$${Math.round(best.vol / 1e6)}M`);
@@ -352,8 +351,16 @@ async function _sellPosition(pos, reason) {
       if (order?.average) sellPrice = order.average;
     } catch (e) {
       const msg = e.message || '';
-      if (msg.includes('insufficient') || msg.includes('balance') || msg.includes('NOTIONAL')) {
-        console.warn(`[Scalper] ${pos.symbol}: no se puede vender — cerrando registro`);
+      if (msg.includes('NOTIONAL')) {
+        const posValue = pos.quantity * sellPrice;
+        if (posValue >= 5) {
+          // Monto vendible pero NOTIONAL fail → mantener abierta, reintentar
+          console.warn(`[Scalper] ${pos.symbol} NOTIONAL ($${posValue.toFixed(2)}) — reintento próximo ciclo`);
+          return;
+        }
+        console.warn(`[Scalper] ${pos.symbol}: dust ($${posValue.toFixed(2)}) — cerrando registro`);
+      } else if (msg.includes('insufficient') || msg.includes('balance')) {
+        console.warn(`[Scalper] ${pos.symbol}: balance insuficiente — cerrando registro`);
       } else {
         console.error(`[Scalper] Sell error: ${msg.substring(0, 60)}`);
       }
