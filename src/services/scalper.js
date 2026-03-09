@@ -244,6 +244,7 @@ async function makeDecisions() {
   if (availUSDT < 10) return;
 
   const tradeAmount = Math.min(Math.floor(availUSDT * 0.40), 15);
+  if (tradeAmount < 6) return; // Mínimo $6 para cumplir NOTIONAL filters de Binance
 
   // ── COMPRAR ──
   console.log(`[Scalper] 🎯 ${best.symbol} +${best.change.toFixed(1)}% en 5min | RSI=${rsi.toFixed(0)} | $${best.price} | Vol:$${Math.round(best.vol / 1e6)}M`);
