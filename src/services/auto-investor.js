@@ -18,7 +18,7 @@ const DISTRIBUTION      = [0.40, 0.35, 0.25];
 const STOP_LOSS_PCT     = 5;
 const TAKE_PROFIT_PCT   = 10;
 
-// Horario real operatoria Cocos Capital / BYMA: 10:30 a 17:00 ART, lunes a viernes
+// Horario operatoria: 10:40 a 17:00 ART (10min post apertura, evitar spreads)
 function isMarketHours() {
   const now = new Date();
   // Convertir a hora Argentina (UTC-3)
@@ -27,7 +27,7 @@ function isMarketHours() {
   const day  = art.getDay();       // 0=dom, 6=sab
   const hhmm = art.getHours() * 100 + art.getMinutes(); // ej 1030, 1700
   if (day === 0 || day === 6) return false;              // fin de semana
-  return hhmm >= 1030 && hhmm < 1700;
+  return hhmm >= 1040 && hhmm < 1700;
 }
 
 const CANDIDATES = {
@@ -297,7 +297,10 @@ async function executeAutoInvest() {
 
     try {
       const quote = await cocos.getQuote(sel.ticker, 'C', primaryCurrency);
-      const price = quote?.last_price || quote?.close_price || quote?.previous_close_price || 0;
+      // Usar ask × 1.002 para asegurar ejecución (last_price como fallback)
+      const askPrice  = quote?.ask || 0;
+      const lastPrice = quote?.last_price || quote?.close_price || quote?.previous_close_price || 0;
+      const price     = askPrice > 0 ? Math.round(askPrice * 1.002 * 100) / 100 : lastPrice;
       if (price <= 0) { console.warn(`[AutoInvest] Sin precio ${sel.ticker} (${primaryCurrency})`); continue; }
 
       const quantity   = Math.max(1, Math.floor(allocation / price));
