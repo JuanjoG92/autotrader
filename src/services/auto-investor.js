@@ -302,20 +302,22 @@ async function executeAutoInvest() {
 
     try {
       const quote = await cocos.getQuote(sel.ticker, 'C', primaryCurrency);
+      const longTicker = quote?.long_ticker || '';
       // Usar ask × 1.002 para asegurar ejecución (last_price como fallback)
       const askPrice  = quote?.ask || 0;
       const lastPrice = quote?.last_price || quote?.close_price || quote?.previous_close_price || 0;
       const price     = askPrice > 0 ? Math.round(askPrice * 1.002 * 100) / 100 : lastPrice;
-      if (price <= 0) { console.warn(`[AutoInvest] Sin precio ${sel.ticker} (${primaryCurrency})`); continue; }
+      if (price <= 0 || !longTicker) { console.warn(`[AutoInvest] Sin precio/ticker ${sel.ticker} (${primaryCurrency})`); continue; }
 
       const quantity   = Math.max(1, Math.floor(allocation / price));
       const total      = quantity * price;
       const stopLoss   = Math.round(price * (1 - stopPct / 100) * 100) / 100;
       const takeProfit = Math.round(price * (1 + tpPct  / 100) * 100) / 100;
 
-      console.log(`[AutoInvest] 📈 BUY ${sel.ticker}: ${quantity}x @ ${primaryCurrency} $${price} = ${primaryCurrency} $${total} | SL:$${stopLoss} TP:$${takeProfit}`);
+      console.log(`[AutoInvest] 📈 BUY ${sel.ticker}: ${quantity}x @ ${primaryCurrency} $${price} = ${primaryCurrency} $${total} | LT:${longTicker} | SL:$${stopLoss} TP:$${takeProfit}`);
 
-      const order   = await cocos.placeBuyOrder(sel.ticker, quantity, price, '24hs', primaryCurrency, 'C');
+      // Usar long_ticker del quote (incluye sufijo D para USD: PBRD, VISTD, etc.)
+      const order   = await cocos.placeOrderByLongTicker(longTicker, 'BUY', quantity, price);
       const orderId = order?.Orden || order?.id || '';
 
       // Verificar estado real de la orden (esperar 2s para que Cocos procese)
@@ -419,7 +421,15 @@ async function monitorPositions() {
 async function executeSell(position, currentPrice, reason) {
   try {
     const curr    = position.currency || 'ARS';
-    const order   = await cocos.placeSellOrder(position.ticker, position.quantity, currentPrice, '24hs', curr, 'C');
+    // Obtener long_ticker correcto (con sufijo D para USD)
+    const quote   = await cocos.getQuote(position.ticker, 'C', curr);
+    const longTicker = quote?.long_ticker || '';
+    let order;
+    if (longTicker) {
+      order = await cocos.placeOrderByLongTicker(longTicker, 'SELL', position.quantity, currentPrice);
+    } else {
+      order = await cocos.placeSellOrder(position.ticker, position.quantity, currentPrice, '24hs', curr, 'C');
+    }
     const orderId = order?.Orden || order?.id || 'OK';
     const pnl     = (currentPrice - position.price) * position.quantity;
 
