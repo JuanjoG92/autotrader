@@ -2,7 +2,7 @@
 // Detección de anomalías de volumen + análisis sectorial de criptos
 // Método profesional: detectar pumps ANTES de que ocurran por volumen anormal
 
-const { getTopGainers, getTicker, getOHLCV } = require('./binance');
+const { getTopGainers, getTicker, getOHLCV, getOrderBook } = require('./binance');
 
 // ── Sector Watchlist ──────────────────────────────────────────────────────────
 // Criptos que trackean sectores reales (tech, energía, commodities, AI)
@@ -337,6 +337,136 @@ async function multiTimeframeCheck(symbol) {
   }
 }
 
+// ── Order Flow Imbalance (OFI) ────────────────────────────────────────────────
+// Analiza bids vs asks en el order book para detectar presión compradora
+// OFI > 1.5 = presión compradora, > 2.0 = posible breakout, > 3.0 = pump probable
+
+async function getOrderFlowImbalance(symbol) {
+  try {
+    const ob = await getOrderBook(symbol, 20);
+    if (!ob || !ob.bids || !ob.asks || !ob.bids.length || !ob.asks.length) {
+      return { ofi: 1, bidVolume: 0, askVolume: 0 };
+    }
+
+    // Sumar volumen en USD de los top 20 niveles de bids y asks
+    let bidVolume = 0, askVolume = 0;
+    for (const [price, amount] of ob.bids) {
+      bidVolume += price * amount;
+    }
+    for (const [price, amount] of ob.asks) {
+      askVolume += price * amount;
+    }
+
+    const ofi = askVolume > 0 ? bidVolume / askVolume : 1;
+
+    return {
+      ofi: Math.round(ofi * 100) / 100,
+      bidVolume: Math.round(bidVolume),
+      askVolume: Math.round(askVolume),
+    };
+  } catch (e) {
+    return { ofi: 1, bidVolume: 0, askVolume: 0 };
+  }
+}
+
+// ── Volatility Compression Detection ──────────────────────────────────────────
+// ATR bajo + volumen subiendo = setup pre-pump (compresión antes de explosión)
+
+function detectVolatilityCompression(candles) {
+  if (!candles || candles.length < 24) return { compressed: false };
+
+  // ATR de las últimas 6h vs ATR de las últimas 24h
+  const atr24h = calculateATR(candles.slice(-24), 14);
+  const atr6h = calculateATR(candles.slice(-6), 5);
+  if (atr24h <= 0) return { compressed: false };
+
+  const compressionRatio = atr6h / atr24h;
+
+  // Volumen: comparar últimas 3h vs promedio
+  const vols = candles.map(c => c[5]);
+  const avgVol = vols.slice(0, -3).reduce((a, b) => a + b, 0) / (vols.length - 3);
+  const recentVol = vols.slice(-3).reduce((a, b) => a + b, 0) / 3;
+  const volRising = avgVol > 0 ? recentVol / avgVol : 1;
+
+  // Compresión: volatilidad baja + volumen subiendo = setup
+  const compressed = compressionRatio < 0.6 && volRising > 1.5;
+
+  return {
+    compressed,
+    compressionRatio: Math.round(compressionRatio * 100) / 100,
+    volRising: Math.round(volRising * 10) / 10,
+  };
+}
+
+// ── BTC Global Filter ─────────────────────────────────────────────────────────
+// Si BTC está bajista (EMA20 < EMA50), el mercado entero tiende a caer
+// → reducir trades o no comprar altcoins
+
+let _btcTrendCache = null;
+let _btcTrendCacheTs = 0;
+const BTC_CACHE_TTL = 5 * 60 * 1000; // 5 min
+
+async function getBTCTrend() {
+  const now = Date.now();
+  if (_btcTrendCache && (now - _btcTrendCacheTs) < BTC_CACHE_TTL) return _btcTrendCache;
+
+  try {
+    const candles = await getOHLCV('BTC/USDT', '1h', 72);
+    if (!candles || candles.length < 24) return { bullish: true, label: 'UNKNOWN' };
+
+    const closes = candles.map(c => c[4]);
+    const price = closes[closes.length - 1];
+    const ema20 = calculateEMA(closes, 20);
+    const ema50 = calculateEMA(closes, Math.min(50, closes.length));
+
+    const bullish = ema20 > ema50 && price > ema20;
+    const bearish = ema20 < ema50 && price < ema20;
+
+    // Cambio 24h de BTC
+    const price24hAgo = closes.length >= 24 ? closes[closes.length - 24] : closes[0];
+    const change24h = ((price - price24hAgo) / price24hAgo) * 100;
+
+    const result = {
+      bullish,
+      bearish,
+      label: bullish ? 'BULLISH' : bearish ? 'BEARISH' : 'NEUTRAL',
+      price,
+      ema20: Math.round(ema20),
+      ema50: Math.round(ema50),
+      change24h: Math.round(change24h * 10) / 10,
+    };
+
+    _btcTrendCache = result;
+    _btcTrendCacheTs = now;
+    return result;
+  } catch {
+    return { bullish: true, label: 'UNKNOWN', change24h: 0 };
+  }
+}
+
+// ── Kill Switch ───────────────────────────────────────────────────────────────
+// Si el bot perdió más de X% hoy, detenerse
+
+function shouldKillSwitch(db, maxLossPct) {
+  maxLossPct = maxLossPct || 5;
+  try {
+    const today = new Date().toISOString().split('T')[0];
+    const row = db.prepare(
+      "SELECT SUM(pnl) as total_pnl FROM crypto_positions WHERE status = 'CLOSED' AND order_id NOT LIKE 'PAPER%' AND closed_at >= ?"
+    ).get(today + 'T00:00:00');
+    const todayPnl = row?.total_pnl || 0;
+
+    // Calcular pérdida como % del portfolio
+    // Si perdió más de $maxLossPct worth → kill
+    if (todayPnl < 0 && Math.abs(todayPnl) > maxLossPct) {
+      return { kill: true, reason: `Kill switch: perdida hoy $${Math.abs(todayPnl).toFixed(2)} > $${maxLossPct}`, todayPnl };
+    }
+    return { kill: false, todayPnl };
+  } catch {
+    return { kill: false, todayPnl: 0 };
+  }
+}
+
 module.exports = {
   SECTOR_CRYPTOS,
   MIN_VOLUME_24H,
@@ -348,4 +478,8 @@ module.exports = {
   detectVolumeSpikes,
   analyzeSectors,
   multiTimeframeCheck,
+  getOrderFlowImbalance,
+  detectVolatilityCompression,
+  getBTCTrend,
+  shouldKillSwitch,
 };

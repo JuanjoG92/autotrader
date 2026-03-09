@@ -483,4 +483,17 @@ function formatAmount(symbol, amount) {
   return amount;
 }
 
-module.exports = { getBalances, getTicker, getOHLCV, createOrder, testConnection, getExchangeForUser, getTopPairs, getTopGainers, checkNewListings, getFirstBinanceBalance, resaveApiKey, getMarketInfo, formatAmount, SUPPORTED_EXCHANGES };
+// ── Order Book: bids vs asks para Order Flow Imbalance ──────────────────────
+
+async function getOrderBook(symbol, depth) {
+  try {
+    const exchange = _getSharedExchange();
+    const ob = await exchange.fetchOrderBook(symbol, depth || 20);
+    return ob;
+  } catch (e) {
+    console.warn(`[Binance] OrderBook error ${symbol}: ${(e.message || '').substring(0, 40)}`);
+    return null;
+  }
+}
+
+module.exports = { getBalances, getTicker, getOHLCV, createOrder, testConnection, getExchangeForUser, getTopPairs, getTopGainers, checkNewListings, getFirstBinanceBalance, resaveApiKey, getMarketInfo, formatAmount, getOrderBook, SUPPORTED_EXCHANGES };

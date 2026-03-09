@@ -365,9 +365,23 @@ async function runAnalysis() {
   const apiKey = await getOpenAIToken();
   if (!apiKey) { console.warn('[Crypto] Sin token OpenAI'); return null; }
 
+  // ── Kill Switch: si perdió más de $5 hoy, no operar ──
+  const killCheck = volDetector.shouldKillSwitch(getDB(), 5);
+  if (killCheck.kill) {
+    console.log(`[Crypto] 🛑 ${killCheck.reason}`);
+    return null;
+  }
+
   console.log('[Crypto] Iniciando análisis...');
 
   const t0 = Date.now();
+
+  // ── BTC Global Filter: si BTC es bearish, reducir agresividad ──
+  const btcTrend = await volDetector.getBTCTrend();
+  const btcBearish = btcTrend.bearish;
+  if (btcBearish) {
+    console.log(`[Crypto] ⚠️ BTC BEARISH (EMA20<EMA50, ${btcTrend.change24h}%) — modo conservador`);
+  }
 
   // ── Paso 1: Fetch paralelo (mercado + balance + RAG al mismo tiempo) ──
   const keyInfo = _getApiKeyInfo(cfg);
@@ -446,8 +460,10 @@ async function runAnalysis() {
     console.warn('[Crypto] ⚠️ No se pudo leer balance de Binance');
   }
 
-  // Invertir 40% del USDT disponible por operación
-  const positionSize = Math.max(10, Math.floor(availableUSDT * 0.40));
+  // Invertir 15% del USDT disponible por operación (conservador para proteger capital)
+  // Si BTC bearish → reducir a 10%
+  const pctPerTrade = btcBearish ? 0.10 : 0.15;
+  const positionSize = Math.max(10, Math.floor(availableUSDT * pctPerTrade));
 
   // ── PRE-ANÁLISIS TÉCNICO: calcular RSI real de los top coins ──
   const topCoins = (activePairs || BASE_CRYPTOS).filter(p => !BASE_CRYPTOS.includes(p)).slice(0, 6);
@@ -496,16 +512,33 @@ async function runAnalysis() {
       }).join('\n')
     : 'Sin datos técnicos.';
 
+  // Enriquecer spikes con OFI (Order Flow Imbalance)
+  for (const spike of volumeSpikes.slice(0, 5)) {
+    try {
+      const ofi = await volDetector.getOrderFlowImbalance(spike.symbol);
+      spike.ofi = ofi.ofi;
+      if (ofi.ofi >= 2) spike.score += (ofi.ofi >= 3 ? 3 : 2);
+    } catch {}
+    await new Promise(r => setTimeout(r, 150));
+  }
+  volumeSpikes.sort((a, b) => b.score - a.score);
+
   const volCtx = volumeSpikes.length
     ? volumeSpikes.slice(0, 5).map(v => {
         const sectorTag = v.sector ? ` | Sector: ${v.sector}` : '';
         const trend = v.trendUp ? 'ALCISTA' : 'lateral';
         const bk = v.breakout6h ? ' | BREAKOUT' : '';
-        return `${v.symbol}: Vol ${v.spikeRatio}x promedio | Score:${v.score} | Trend:${trend} | ATR:${v.atrPct}%${bk} | 24h:${v.change24h >= 0 ? '+' : ''}${v.change24h.toFixed(0)}% | Vol24h:$${Math.round((v.volume24h || 0) / 1e6)}M${sectorTag}`;
+        const ofiTag = v.ofi ? ` | OFI:${v.ofi}` : '';
+        return `${v.symbol}: Vol ${v.spikeRatio}x | Score:${v.score}${ofiTag} | Trend:${trend} | ATR:${v.atrPct}%${bk} | 24h:${v.change24h >= 0 ? '+' : ''}${v.change24h.toFixed(0)}% | Vol24h:$${Math.round((v.volume24h || 0) / 1e6)}M${sectorTag}`;
       }).join('\n')
     : 'Sin anomalías de volumen.';
 
-  const prompt = `CRYPTO TRADER — Binance Spot — DATOS TÉCNICOS + VOLUMEN + SECTORES
+  const btcCtx = `BTC Trend: ${btcTrend.label} | EMA20:$${btcTrend.ema20 || '?'} EMA50:$${btcTrend.ema50 || '?'} | 24h:${btcTrend.change24h || 0}%`;
+
+  const prompt = `CRYPTO TRADER — Binance Spot — DATOS TÉCNICOS + VOLUMEN + OFI + SECTORES
+
+MERCADO GLOBAL:
+${btcCtx}
 
 MERCADO:
 ${marketCtx}
@@ -513,7 +546,7 @@ ${marketCtx}
 INDICADORES TÉCNICOS REALES (RSI 14 en velas 15min):
 ${techCtx}
 
-ANOMALÍAS DE VOLUMEN (coins con volumen anormal = dinero entrando):
+ANOMALÍAS DE VOLUMEN + ORDER FLOW (OFI = bids/asks, >2 = presión compradora):
 ${volCtx}
 
 BALANCE: ${balanceCtx} | USDT libre: $${availableUSDT.toFixed(0)} | Invertir ~$${positionSize} por operación
@@ -647,6 +680,15 @@ JSON:
       if (change24h > volDetector.MAX_PUMP_24H) {
         console.log(`[Crypto] ❌ BLOQUEADO ${sig.symbol}: +${change24h.toFixed(0)}% > 25% (probable final de pump)`);
         continue;
+      }
+
+      // FILTRO BTC: si BTC bearish, solo comprar si tiene OFI fuerte
+      if (btcBearish) {
+        const volSpike = volumeSpikes.find(v => v.symbol === sig.symbol);
+        if (!volSpike || !volSpike.ofi || volSpike.ofi < 2) {
+          console.log(`[Crypto] ❌ BLOQUEADO ${sig.symbol}: BTC bearish + sin OFI fuerte`);
+          continue;
+        }
       }
 
       // Validar con datos técnicos pre-calculados o en tiempo real
