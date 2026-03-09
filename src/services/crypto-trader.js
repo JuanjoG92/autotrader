@@ -500,7 +500,8 @@ async function runAnalysis() {
     ? volumeSpikes.slice(0, 5).map(v => {
         const sectorTag = v.sector ? ` | Sector: ${v.sector}` : '';
         const trend = v.trendUp ? 'ALCISTA' : 'lateral';
-        return `${v.symbol}: Vol ${v.spikeRatio}x promedio | Score:${v.score} | Trend:${trend} | 24h:${v.change24h >= 0 ? '+' : ''}${v.change24h.toFixed(0)}%${sectorTag}`;
+        const bk = v.breakout6h ? ' | BREAKOUT' : '';
+        return `${v.symbol}: Vol ${v.spikeRatio}x promedio | Score:${v.score} | Trend:${trend} | ATR:${v.atrPct}%${bk} | 24h:${v.change24h >= 0 ? '+' : ''}${v.change24h.toFixed(0)}% | Vol24h:$${Math.round((v.volume24h || 0) / 1e6)}M${sectorTag}`;
       }).join('\n')
     : 'Sin anomalías de volumen.';
 
@@ -523,13 +524,15 @@ NOTICIAS: ${newsCtx}
 
 REGLAS DE TRADING:
 1. COMPRAR si RSI < 70 Y precio cerca del máximo reciente (drop < 3%).
-2. PRIORIZAR coins con anomalía de volumen (spike >= 3x) — indica pump inminente.
-3. Preferir RSI 30-55 (mejor zona de entrada) y volumen >$3M.
-4. Coins de sectores Tech/AI, Energía, RWA tienen tendencia alcista a largo plazo — darles preferencia.
-5. SELL solo si posición bajó más de -${cfg.stop_loss_pct || 5}% desde entrada.
-6. Sin USDT libre → HOLD. Posiciones en ganancia → HOLD.
-7. amount_usd = $${positionSize}. Confidence > 0.80 solo con RSI favorable + volumen alto.
-8. Si NINGUNA cripto tiene RSI favorable → NO dar BUY. Esperar es válido.
+2. PRIORIZAR coins con anomalía de volumen (spike >= 3x + BREAKOUT) — indica pump activo.
+3. SOLO coins con volumen 24h > $10M (liquidez real, evitar shitcoins).
+4. EVITAR coins que ya subieron >25% en 24h — probablemente final de pump.
+5. Preferir RSI 30-55 (mejor zona de entrada) y cambio 24h entre +3% y +15% (inicio de tendencia).
+6. Coins de sectores Tech/AI, Energía, RWA tienen narrativa alcista — darles preferencia.
+7. SELL solo si posición bajó más de -${cfg.stop_loss_pct || 5}% desde entrada.
+8. Sin USDT libre → HOLD. Posiciones en ganancia → HOLD.
+9. amount_usd = $${positionSize}. Confidence > 0.80 solo con RSI + volumen + breakout.
+10. Si NINGUNA cripto cumple todos los filtros → NO dar BUY. Esperar es válido.
 
 JSON:
 {"signals":[{"symbol":"XXX/USDT","action":"BUY|SELL|HOLD","confidence":0.85,"amount_usd":${positionSize},"reason":"RSI=XX, Vol:Xx, ..."}],"analysis":"breve","market_sentiment":"BULLISH|BEARISH|NEUTRAL","watchlist":[]}`;
@@ -541,7 +544,7 @@ JSON:
       body: JSON.stringify({
         model: OPENAI_MODEL, temperature: 0.2, max_tokens: 800,
         messages: [
-          { role: 'system', content: 'Eres un trader técnico cuantitativo. Decides basándote en: 1) RSI y precio vs máximo, 2) anomalías de volumen (spike = dinero entrando), 3) sectores (tech/AI, energía, RWA suben a largo plazo). Prioriza coins con volume spike alto + RSI favorable. Si nada cumple, NO dar BUY. JSON válido siempre.' },
+          { role: 'system', content: 'Eres un trader cuantitativo profesional. Priorizas: 1) Volume spike + breakout = señal más fuerte, 2) RSI favorable (30-55 ideal), 3) Liquidez alta (>$10M vol). NUNCA comprar coins con +25% ya — es tarde. Preferir inicio de tendencia (+3-15%) sobre pumps agotados. Si nada cumple filtros, NO dar BUY. JSON válido siempre.' },
           { role: 'user', content: prompt },
         ],
         response_format: { type: 'json_object' },
@@ -628,10 +631,23 @@ JSON:
         continue;
       }
 
-      // ── VALIDACIÓN PRE-COMPRA: usar datos técnicos ya calculados ──
+      // ── VALIDACIÓN PRE-COMPRA: filtros cuantitativos + técnicos ──
       const techData = technicalData.find(t => t.symbol === sig.symbol);
       const gainerData = (await getTopGainers(20)).find(g => g.symbol === sig.symbol);
       const change24h = gainerData?.change24h || techData?.change || 0;
+      const vol24h = gainerData?.volume || 0;
+
+      // FILTRO LIQUIDEZ: mínimo $10M volumen diario
+      if (vol24h > 0 && vol24h < volDetector.MIN_VOLUME_24H) {
+        console.log(`[Crypto] ❌ BLOQUEADO ${sig.symbol}: Vol $${Math.round(vol24h / 1e6)}M < $10M (baja liquidez)`);
+        continue;
+      }
+
+      // FILTRO PUMP CAP: si +25% probablemente final de pump
+      if (change24h > volDetector.MAX_PUMP_24H) {
+        console.log(`[Crypto] ❌ BLOQUEADO ${sig.symbol}: +${change24h.toFixed(0)}% > 25% (probable final de pump)`);
+        continue;
+      }
 
       // Validar con datos técnicos pre-calculados o en tiempo real
       let validatedRSI = '?';
@@ -646,10 +662,10 @@ JSON:
         }
         validatedRSI = techData.rsi;
         const volSpike = volumeSpikes.find(v => v.symbol === sig.symbol);
-        const volTag = volSpike ? ` | Vol:${volSpike.spikeRatio}x` : '';
+        const volTag = volSpike ? ` | Vol:${volSpike.spikeRatio}x${volSpike.breakout6h ? ' BREAKOUT' : ''}` : '';
         console.log(`[Crypto] ✓ ${sig.symbol}: RSI=${techData.rsi}, +${change24h.toFixed(0)}%, drop=${techData.dropFromHigh}%${volTag} — OK`);
       } else {
-        // Multi-timeframe: verificar tendencia 1h + RSI 15m
+        // Multi-timeframe: verificar tendencia 1h (72 velas) + RSI 15m + ATR
         const mtf = await volDetector.multiTimeframeCheck(sig.symbol);
         if (!mtf.ok) {
           console.log(`[Crypto] ❌ BLOQUEADO ${sig.symbol}: ${mtf.reason}`);
@@ -920,6 +936,20 @@ async function sniperNewListings() {
       if (availUSDT < 8) {
         console.log(`[Crypto] 🚀 Skip — sin USDT suficiente ($${availUSDT.toFixed(2)})`);
         break;
+      }
+
+      // SLIPPAGE CHECK: esperar 5 seg y verificar que el precio no se disparó
+      await new Promise(r => setTimeout(r, 5000));
+      let freshPrice = listing.price;
+      try {
+        const t = await getTicker(listing.symbol);
+        freshPrice = t?.last || listing.price;
+      } catch {}
+      const slippage = ((freshPrice - listing.price) / listing.price) * 100;
+      if (slippage > 15) {
+        console.log(`[Crypto] 🚀 Skip ${listing.symbol} — slippage ${slippage.toFixed(0)}% (subió demasiado rápido)`);
+        _sniperBought.add(listing.symbol); // no reintentar
+        continue;
       }
 
       // Usar el monto configurado, sin tope artificial

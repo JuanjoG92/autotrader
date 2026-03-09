@@ -46,6 +46,10 @@ function getSectorForSymbol(symbol) {
   return null;
 }
 
+// ── Filtros de liquidez ──────────────────────────────────────────────────────
+const MIN_VOLUME_24H = 10_000_000; // Mínimo $10M vol diario (evitar shitcoins ilíquidas)
+const MAX_PUMP_24H = 25;           // Si +25% ya fue, probablemente final de pump
+
 // ── EMA (Exponential Moving Average) ──────────────────────────────────────────
 
 function calculateEMA(data, period) {
@@ -58,45 +62,82 @@ function calculateEMA(data, period) {
   return ema;
 }
 
+// ── ATR (Average True Range) — mide volatilidad real ──────────────────────────
+
+function calculateATR(candles, period) {
+  period = period || 14;
+  if (candles.length < period + 1) return 0;
+  const trs = [];
+  for (let i = 1; i < candles.length; i++) {
+    const high = candles[i][2];
+    const low = candles[i][3];
+    const prevClose = candles[i - 1][4];
+    const tr = Math.max(high - low, Math.abs(high - prevClose), Math.abs(low - prevClose));
+    trs.push(tr);
+  }
+  let atr = trs.slice(0, period).reduce((a, b) => a + b, 0) / period;
+  for (let i = period; i < trs.length; i++) {
+    atr = (atr * (period - 1) + trs[i]) / period;
+  }
+  return atr;
+}
+
 // ── Volume Spike Detection ────────────────────────────────────────────────────
 // Detecta anomalías de volumen: si el volumen actual es X veces mayor que el
 // promedio, indica que hay dinero entrando → posible pump inminente
 
 async function detectVolumeSpikes(minRatio) {
-  minRatio = minRatio || 3; // Default: 3x el volumen promedio
+  minRatio = minRatio || 3;
   const spikes = [];
 
   try {
     const gainers = await getTopGainers(30);
     if (!gainers || !gainers.length) return spikes;
 
+    let skippedLiq = 0, skippedPump = 0;
+
     for (const coin of gainers) {
       try {
-        // Obtener velas de 1h para calcular volumen promedio
-        const candles = await getOHLCV(coin.symbol, '1h', 24);
-        if (!candles || candles.length < 12) continue;
+        // FILTRO 1: Liquidez — mínimo $10M volumen diario
+        if (coin.volume < MIN_VOLUME_24H) { skippedLiq++; continue; }
 
-        // Volumen promedio de las últimas 24h (excluyendo la última vela)
-        const volumes = candles.slice(0, -1).map(c => c[5]); // c[5] = volume
+        // FILTRO 2: Pump cap — si +25% probablemente ya es tarde
+        if (coin.change24h > MAX_PUMP_24H) { skippedPump++; continue; }
+
+        // 72 velas de 1h = 3 días de contexto (no solo 24h)
+        const candles = await getOHLCV(coin.symbol, '1h', 72);
+        if (!candles || candles.length < 24) continue;
+
+        // Volumen promedio (excluyendo últimas 3 velas para detectar spike reciente)
+        const volumes = candles.slice(0, -3).map(c => c[5]);
         const avgVolume = volumes.reduce((a, b) => a + b, 0) / volumes.length;
         if (avgVolume <= 0) continue;
 
-        // Volumen de la última vela
-        const currentVolume = candles[candles.length - 1][5];
-        const spikeRatio = currentVolume / avgVolume;
+        // Volumen de las últimas 3 velas promediado (spike reciente, no solo 1 vela)
+        const recentVols = candles.slice(-3).map(c => c[5]);
+        const recentAvg = recentVols.reduce((a, b) => a + b, 0) / recentVols.length;
+        const spikeRatio = recentAvg / avgVolume;
 
         if (spikeRatio >= minRatio) {
-          // Calcular EMA trend (1h)
           const closes = candles.map(c => c[4]);
-          const ema20 = calculateEMA(closes, Math.min(20, closes.length));
-          const ema50 = calculateEMA(closes, Math.min(50, closes.length));
           const currentPrice = closes[closes.length - 1];
+
+          // EMA trend con más contexto (72 velas)
+          const ema20 = calculateEMA(closes, 20);
+          const ema50 = calculateEMA(closes, Math.min(50, closes.length));
           const trendUp = ema20 > ema50 && currentPrice > ema20;
 
-          // Precio vs máximo reciente
-          const recentHigh = Math.max(...candles.slice(-6).map(c => c[2]));
-          const dropFromHigh = ((recentHigh - currentPrice) / recentHigh) * 100;
+          // Breakout: precio rompe máximo de 6h (confirmación de momentum)
+          const high6h = Math.max(...candles.slice(-6).map(c => c[2]));
+          const high24h = Math.max(...candles.slice(-24).map(c => c[2]));
+          const breakout6h = currentPrice >= high6h * 0.995; // dentro del 0.5% del max 6h
+          const dropFromHigh = ((high24h - currentPrice) / high24h) * 100;
           const nearHigh = dropFromHigh < 3;
+
+          // ATR: volatilidad real (evitar mercados muertos)
+          const atr = calculateATR(candles, 14);
+          const atrPct = currentPrice > 0 ? (atr / currentPrice) * 100 : 0;
+          const hasVolatility = atrPct > 0.5; // al menos 0.5% de rango por vela
 
           const sector = getSectorForSymbol(coin.symbol);
 
@@ -106,25 +147,28 @@ async function detectVolumeSpikes(minRatio) {
             change24h: coin.change24h || 0,
             spikeRatio: Math.round(spikeRatio * 10) / 10,
             avgVolume: Math.round(avgVolume),
-            currentVolume: Math.round(currentVolume),
+            currentVolume: Math.round(recentAvg),
+            volume24h: coin.volume || 0,
             trendUp,
             nearHigh,
+            breakout6h,
+            atrPct: Math.round(atrPct * 10) / 10,
+            hasVolatility,
             dropFromHigh: Math.round(dropFromHigh * 10) / 10,
             sector: sector ? sector.label : null,
             sectorKey: sector ? sector.key : null,
-            // Score compuesto: volumen + tendencia + proximidad al máximo
-            score: _calcSpikeScore(spikeRatio, trendUp, nearHigh, coin.change24h),
+            score: _calcSpikeScore(spikeRatio, trendUp, nearHigh, coin.change24h, breakout6h, hasVolatility, coin.volume),
           });
         }
 
-        await new Promise(r => setTimeout(r, 200)); // Rate limit
+        await new Promise(r => setTimeout(r, 200));
       } catch {}
     }
 
     spikes.sort((a, b) => b.score - a.score);
     if (spikes.length > 0) {
       const top = spikes.slice(0, 3).map(s => `${s.symbol} Vol:${s.spikeRatio}x Score:${s.score}`).join(', ');
-      console.log(`[VolDetect] ${spikes.length} spikes detectados: ${top}`);
+      console.log(`[VolDetect] ${spikes.length} spikes (${skippedLiq} baja liquidez, ${skippedPump} pump >25% ignorados): ${top}`);
     }
   } catch (e) {
     console.warn('[VolDetect] Error:', (e.message || '').substring(0, 60));
@@ -133,7 +177,7 @@ async function detectVolumeSpikes(minRatio) {
   return spikes;
 }
 
-function _calcSpikeScore(spikeRatio, trendUp, nearHigh, change24h) {
+function _calcSpikeScore(spikeRatio, trendUp, nearHigh, change24h, breakout6h, hasVolatility, volume24h) {
   let score = 0;
 
   // Volumen anormal (factor principal)
@@ -147,10 +191,20 @@ function _calcSpikeScore(spikeRatio, trendUp, nearHigh, change24h) {
   // Precio cerca del máximo (pump activo, no terminó)
   if (nearHigh) score += 2;
 
-  // Cambio 24h moderado (5-30% = zona óptima, >50% = pump agotado)
-  if (change24h >= 5 && change24h <= 15) score += 2;
-  else if (change24h > 15 && change24h <= 30) score += 1;
-  else if (change24h > 50) score -= 1;
+  // Breakout: rompiendo máximo de 6h = confirmación fuerte
+  if (breakout6h) score += 3;
+
+  // Volatilidad real (evitar mercados muertos)
+  if (hasVolatility) score += 1;
+
+  // Liquidez alta = señal más confiable
+  if (volume24h >= 50_000_000) score += 2;      // >$50M = muy líquido
+  else if (volume24h >= 20_000_000) score += 1;  // >$20M = ok
+
+  // Cambio 24h: zona óptima 3-15% (inicio de tendencia, no final de pump)
+  if (change24h >= 3 && change24h <= 10) score += 3;  // Zona ideal: inicio
+  else if (change24h > 10 && change24h <= 20) score += 1; // Moderado
+  else if (change24h > 20) score -= 2;  // Probable final de pump
 
   return Math.max(0, score);
 }
@@ -236,12 +290,12 @@ function _quickRSI(closes) {
 
 async function multiTimeframeCheck(symbol) {
   try {
-    // 1h: tendencia general
-    const candles1h = await getOHLCV(symbol, '1h', 24);
-    if (!candles1h || candles1h.length < 12) return { ok: false, reason: 'Sin datos 1h' };
+    // 1h: tendencia general (72 velas = 3 días de contexto)
+    const candles1h = await getOHLCV(symbol, '1h', 72);
+    if (!candles1h || candles1h.length < 24) return { ok: false, reason: 'Sin datos 1h' };
 
     const closes1h = candles1h.map(c => c[4]);
-    const ema20_1h = calculateEMA(closes1h, Math.min(20, closes1h.length));
+    const ema20_1h = calculateEMA(closes1h, 20);
     const ema50_1h = calculateEMA(closes1h, Math.min(50, closes1h.length));
     const price = closes1h[closes1h.length - 1];
     const trend1h = ema20_1h > ema50_1h && price > ema20_1h;
@@ -250,11 +304,22 @@ async function multiTimeframeCheck(symbol) {
       return { ok: false, reason: 'Tendencia 1h bajista (EMA20 < EMA50)' };
     }
 
+    // ATR: verificar que hay volatilidad suficiente
+    const atr = calculateATR(candles1h, 14);
+    const atrPct = price > 0 ? (atr / price) * 100 : 0;
+    if (atrPct < 0.3) {
+      return { ok: false, reason: `Volatilidad muy baja (ATR ${atrPct.toFixed(1)}%)` };
+    }
+
+    // Breakout: precio rompiendo máximo de 6h
+    const high6h = Math.max(...candles1h.slice(-6).map(c => c[2]));
+    const breakout = price >= high6h * 0.99;
+
     await new Promise(r => setTimeout(r, 200));
 
     // 15m: timing de entrada
     const candles15m = await getOHLCV(symbol, '15m', 20);
-    if (!candles15m || candles15m.length < 15) return { ok: true, trend1h: true, rsi15m: 50 };
+    if (!candles15m || candles15m.length < 15) return { ok: true, trend1h: true, rsi15m: 50, breakout };
 
     const closes15m = candles15m.map(c => c[4]);
     const rsi15m = _quickRSI(closes15m);
@@ -263,6 +328,8 @@ async function multiTimeframeCheck(symbol) {
       ok: rsi15m < 70,
       trend1h: true,
       rsi15m: Math.round(rsi15m),
+      atrPct: Math.round(atrPct * 10) / 10,
+      breakout,
       reason: rsi15m >= 70 ? `RSI 15m=${Math.round(rsi15m)} sobrecomprada` : null,
     };
   } catch (e) {
@@ -272,9 +339,12 @@ async function multiTimeframeCheck(symbol) {
 
 module.exports = {
   SECTOR_CRYPTOS,
+  MIN_VOLUME_24H,
+  MAX_PUMP_24H,
   getAllSectorPairs,
   getSectorForSymbol,
   calculateEMA,
+  calculateATR,
   detectVolumeSpikes,
   analyzeSectors,
   multiTimeframeCheck,
