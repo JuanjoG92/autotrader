@@ -26,6 +26,7 @@ let _reconnectTimer = null;
 let _decisionTimer = null;
 let _monitorTimer = null;
 let _broadcastFn = null;
+let _buyingLock = new Set();  // Anti-duplicado: symbols en proceso de compra
 
 // ── Helpers DB (comparte tablas con crypto-trader) ────────────────────────────
 
@@ -249,6 +250,10 @@ async function makeDecisions() {
   // ── COMPRAR ──
   console.log(`[Scalper] 🎯 ${best.symbol} +${best.change.toFixed(1)}% en 5min | RSI=${rsi.toFixed(0)} | $${best.price} | Vol:$${Math.round(best.vol / 1e6)}M`);
 
+  // Anti-duplicado: si ya estamos comprando este symbol, skip
+  if (_buyingLock.has(best.symbol)) return;
+  _buyingLock.add(best.symbol);
+
   try {
     // Obtener precio fresco para la orden
     const ticker = await getTicker(best.symbol);
@@ -279,6 +284,8 @@ async function makeDecisions() {
     });
   } catch (e) {
     console.error(`[Scalper] Error BUY ${best.symbol}: ${(e.message || '').substring(0, 60)}`);
+  } finally {
+    _buyingLock.delete(best.symbol);
   }
 }
 
