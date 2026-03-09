@@ -70,6 +70,17 @@ app.get('/api/health', (req, res) => {
   });
 });
 
+
+// Test endpoint temporal (borrar despues)
+app.get('/api/test-quote', async (req, res) => {
+  const { ticker, currency } = req.query;
+  if (!ticker) return res.status(400).json({ error: 'ticker required' });
+  try {
+    const q = await cocos.getQuote(ticker, 'C', currency || 'ARS');
+    const bp = await cocos.getBuyingPower();
+    res.json({ quote: q, buyingPower: bp });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
 // ── SPA fallback ──
 app.get('/dashboard', (req, res) => res.sendFile(path.join(__dirname, 'public', 'dashboard.html')));
 app.get('/cocos',     (req, res) => res.sendFile(path.join(__dirname, 'public', 'cocos.html')));
