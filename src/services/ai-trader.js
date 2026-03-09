@@ -21,7 +21,7 @@ const ALL_SECTORS = {
   'Latam/Otros':      ['MELI', 'TECO2', 'GLOB'],
 };
 
-const CEDEARS  = new Set(['AAPL','MSFT','GOOGL','NVDA','META','AMZN','TSLA','XOM','CVX','MELI','OXY','VIST','XLE','SMCI','PLTR','SPY','QQQ','SMH','GLD','AMD']);
+const CEDEARS  = new Set(['AAPL','MSFT','GOOGL','NVDA','META','AMZN','TSLA','XOM','CVX','MELI','OXY','VIST','XLE','SMCI','PLTR','SPY','QQQ','SMH','GLD','AMD','PBR']);
 const ACCIONES = new Set(['YPFD','PAMP','TGNO4','TGSU2','CEPU','GGAL','BBAR','BMA','SUPV','ALUA','LOMA','TXAR','TECO2']);
 
 let _analysisTimer = null;

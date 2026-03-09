@@ -73,15 +73,18 @@ function updateAutoConfig(changes) {
 }
 
 function saveInvestment(inv) {
-  return getDB().prepare(`
+  const db = getDB();
+  try { db.prepare("ALTER TABLE auto_investments ADD COLUMN currency TEXT DEFAULT 'ARS'").run(); } catch {}
+  return db.prepare(`
     INSERT INTO auto_investments
       (ticker, action, quantity, price, total_ars, order_id, status,
-       stop_loss_price, take_profit_price, reason)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       stop_loss_price, take_profit_price, reason, currency)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     inv.ticker, inv.action, inv.quantity || 0, inv.price || 0,
     inv.total_ars || 0, inv.order_id || '', inv.status || 'PENDING',
-    inv.stop_loss_price || 0, inv.take_profit_price || 0, inv.reason || ''
+    inv.stop_loss_price || 0, inv.take_profit_price || 0, inv.reason || '',
+    inv.currency || 'ARS'
   );
 }
 
@@ -133,23 +136,25 @@ async function selectBestTickers() {
 
   const prompt = `SELECCION AUTOMATICA DE INVERSION — AutoTrader
 
-Eres un experto en inversiones en CEDEARs argentinos.
-Debes seleccionar EXACTAMENTE 3 CEDEARs para invertir HOY.
+Eres un experto en inversiones en CEDEARs y acciones argentinas (BYMA).
+Debes seleccionar EXACTAMENTE 3 activos para invertir HOY.
 
 REGLAS:
 1. Seleccionar EXACTAMENTE 3 tickers diferentes
-2. OBLIGATORIO: al menos 1 de tecnología/IA y al menos 1 de energía/petróleo
-3. Priorizar activos con tendencia alcista (trend5 positivo, RSI 30-70)
-4. Evitar activos con RSI > 75 (sobrecomprados)
-5. Evitar activos con trend5 < -5%
-6. NO PERDER DINERO es la prioridad máxima
-7. Distribuir: 40% primer activo, 35% segundo, 25% tercero
-8. Ordenar de mayor a menor confianza
+2. OBLIGATORIO: EXACTAMENTE 2 de Energia/Petroleo y 1 de Tecnología/IA
+3. Priorizar los activos que MAS ESTAN SUBIENDO hoy (mayor variación positiva)
+4. Priorizar activos con tendencia alcista (trend5 positivo, RSI 30-70)
+5. Evitar activos con RSI > 80 (muy sobrecomprados)
+6. Evitar activos con trend5 < -5% (tendencia bajista fuerte)
+7. NO PERDER DINERO es la prioridad máxima
+8. Distribuir: 40% primer activo (mejor energía), 35% segundo (segunda energía), 25% tercero (mejor tech)
+9. Ordenar: primero las 2 energéticas, luego la tecnológica
 
 CANDIDATOS:
+Energia/Petroleo: ${CANDIDATES['Energia/Petroleo'].join(', ')}
 Tech/IA: ${CANDIDATES['Tech/IA'].join(', ')}
-Energia: ${CANDIDATES['Energia/Petroleo'].join(', ')}
 ETF: ${CANDIDATES['ETF Diversificado'].join(', ')}
+Bancos: ${CANDIDATES['Bancos/Finanzas'].join(', ')}
 
 DATOS TECNICOS:
 ${marketCtx}
@@ -161,9 +166,9 @@ ${ragCtx ? `\nCONOCIMIENTO DEL USUARIO:\n${ragCtx}` : ''}
 RESPONDE SOLO JSON:
 {
   "selections": [
-    {"ticker":"NVDA","category":"Tech/IA","confidence":0.85,"reason":"RSI favorable + tendencia IA"},
-    {"ticker":"XOM","category":"Energia","confidence":0.80,"reason":"Petróleo estable"},
-    {"ticker":"SPY","category":"ETF","confidence":0.78,"reason":"Diversificación segura"}
+    {"ticker":"PBR","category":"Energia","confidence":0.88,"reason":"Petróleo subiendo +5%"},
+    {"ticker":"VIST","category":"Energia","confidence":0.82,"reason":"Vaca Muerta alcista"},
+    {"ticker":"NVDA","category":"Tech/IA","confidence":0.80,"reason":"Líder IA con momentum"}
   ],
   "market_outlook":"BULLISH|BEARISH|NEUTRAL",
   "risk_assessment":"LOW|MEDIUM|HIGH",
@@ -211,39 +216,51 @@ async function executeAutoInvest() {
 
   console.log('[AutoInvest] 🚀 Mercado abierto — iniciando inversión automática…');
 
-  // Poder de compra (ARS + USD convertido a ARS)
+  // Detectar moneda principal y poder de compra
+  let primaryCurrency = 'ARS';
   let buyingPower = 0;
-  let buyingPowerUSD = 0;
+  let dolarMEP = 1200;
   try {
     const bp = await cocos.getBuyingPower();
-    buyingPower = bp?.['24hs']?.ars || 0;
-    buyingPowerUSD = bp?.['24hs']?.usd || 0;
-    // Si hay USD, obtener dólar MEP para convertir a ARS equivalente
-    if (buyingPowerUSD > 10) {
-      let dolarMEP = 1200; // fallback
-      try {
-        const mep = await cocos.getDolarMEP();
-        dolarMEP = mep?.venta || mep?.compra || mep?.price || 1200;
-      } catch {}
-      const usdInArs = Math.floor(buyingPowerUSD * dolarMEP);
-      console.log(`[AutoInvest] USD $${buyingPowerUSD.toFixed(2)} × MEP $${dolarMEP} = ARS $${usdInArs}`);
-      buyingPower += usdInArs;
+    const arsCapital = bp?.['24hs']?.ars || 0;
+    const usdCapital = bp?.['24hs']?.usd || 0;
+
+    // Obtener dólar MEP para conversiones
+    try {
+      const mep = await cocos.getDolarMEP();
+      dolarMEP = mep?.venta || mep?.compra || mep?.price || 1200;
+    } catch {}
+
+    if (usdCapital > 10 && arsCapital < 5000) {
+      // Capital mayormente en USD — operar en dólares
+      primaryCurrency = 'USD';
+      buyingPower = usdCapital;
+      console.log(`[AutoInvest] Capital en USD: $${usdCapital.toFixed(2)} — operando en dólares`);
+    } else if (usdCapital > 10) {
+      // Capital mixto — convertir USD a ARS equivalente
+      const usdInArs = Math.floor(usdCapital * dolarMEP);
+      buyingPower = arsCapital + usdInArs;
+      console.log(`[AutoInvest] Mixto: ARS $${arsCapital} + USD $${usdCapital.toFixed(2)} × MEP $${dolarMEP} = Total ARS $${buyingPower}`);
+    } else {
+      buyingPower = arsCapital;
     }
-    console.log(`[AutoInvest] Poder de compra total: ARS $${buyingPower} (USD $${buyingPowerUSD.toFixed(2)})`);
+    console.log(`[AutoInvest] Poder de compra: ${primaryCurrency} $${buyingPower.toFixed(2)}`);
   } catch (e) {
     console.error('[AutoInvest] Error poder de compra:', e.message);
     return null;
   }
 
-  const minInvest = cfg.min_invest_ars || 10000;
+  // Min invest ajustado por moneda (10000 ARS ≈ $8 USD)
+  const minInvestArs = cfg.min_invest_ars || 10000;
+  const minInvest = primaryCurrency === 'USD' ? Math.max(10, minInvestArs / dolarMEP) : minInvestArs;
   if (buyingPower < minInvest) {
-    console.log(`[AutoInvest] Capital insuficiente: $${buyingPower} (mín $${minInvest})`);
+    console.log(`[AutoInvest] Capital insuficiente: ${primaryCurrency} $${buyingPower.toFixed(2)} (mín ${primaryCurrency} $${minInvest.toFixed(2)})`);
     return null;
   }
 
   const investPct    = (cfg.invest_pct || 50) / 100;
-  const totalInvest  = Math.floor(buyingPower * investPct);
-  console.log(`[AutoInvest] Capital: $${buyingPower} → Invertir: $${totalInvest} (${cfg.invest_pct||50}%)`);
+  const totalInvest  = primaryCurrency === 'USD' ? Math.round(buyingPower * investPct * 100) / 100 : Math.floor(buyingPower * investPct);
+  console.log(`[AutoInvest] Capital: ${primaryCurrency} $${buyingPower.toFixed(2)} → Invertir: ${primaryCurrency} $${totalInvest} (${cfg.invest_pct||50}%)`);
 
   // IA selecciona los 3 mejores
   let selection;
@@ -254,9 +271,9 @@ async function executeAutoInvest() {
     console.error('[AutoInvest] Error selección IA:', e.message);
     selection = {
       selections: [
-        { ticker: 'NVDA', category: 'Tech/IA',  confidence: 0.75, reason: 'Fallback — líder IA' },
-        { ticker: 'XOM',  category: 'Energia',   confidence: 0.70, reason: 'Fallback — petrolera sólida' },
-        { ticker: 'SPY',  category: 'ETF',        confidence: 0.70, reason: 'Fallback — diversificación' },
+        { ticker: 'PBR',  category: 'Energia',   confidence: 0.75, reason: 'Fallback — petróleo en alza' },
+        { ticker: 'VIST', category: 'Energia',   confidence: 0.70, reason: 'Fallback — Vaca Muerta' },
+        { ticker: 'NVDA', category: 'Tech/IA',   confidence: 0.70, reason: 'Fallback — líder IA' },
       ],
       market_outlook: 'NEUTRAL',
       risk_assessment: 'MEDIUM',
@@ -279,18 +296,18 @@ async function executeAutoInvest() {
     const allocation = Math.floor(totalInvest * DISTRIBUTION[i]);
 
     try {
-      const quote = await cocos.getQuote(sel.ticker, 'C');
+      const quote = await cocos.getQuote(sel.ticker, 'C', primaryCurrency);
       const price = quote?.last_price || quote?.close_price || quote?.previous_close_price || 0;
-      if (price <= 0) { console.warn(`[AutoInvest] Sin precio ${sel.ticker}`); continue; }
+      if (price <= 0) { console.warn(`[AutoInvest] Sin precio ${sel.ticker} (${primaryCurrency})`); continue; }
 
       const quantity   = Math.max(1, Math.floor(allocation / price));
       const total      = quantity * price;
       const stopLoss   = Math.round(price * (1 - stopPct / 100) * 100) / 100;
       const takeProfit = Math.round(price * (1 + tpPct  / 100) * 100) / 100;
 
-      console.log(`[AutoInvest] 📈 BUY ${sel.ticker}: ${quantity}x @ $${price} = $${total} | SL:$${stopLoss} TP:$${takeProfit}`);
+      console.log(`[AutoInvest] 📈 BUY ${sel.ticker}: ${quantity}x @ ${primaryCurrency} $${price} = ${primaryCurrency} $${total} | SL:$${stopLoss} TP:$${takeProfit}`);
 
-      const order   = await cocos.placeBuyOrder(sel.ticker, quantity, price, '24hs', 'ARS', 'C');
+      const order   = await cocos.placeBuyOrder(sel.ticker, quantity, price, '24hs', primaryCurrency, 'C');
       const orderId = order?.Orden || order?.id || '';
 
       // Verificar estado real de la orden (esperar 2s para que Cocos procese)
@@ -312,7 +329,8 @@ async function executeAutoInvest() {
         ticker: sel.ticker, action: 'BUY', quantity, price, total_ars: total,
         order_id: orderId, status: orderStatus,
         stop_loss_price: stopLoss, take_profit_price: takeProfit,
-        reason: `${sel.reason} | Confianza: ${(sel.confidence*100).toFixed(0)}% | ${sel.category}`,
+        currency: primaryCurrency,
+        reason: `${sel.reason} | Confianza: ${(sel.confidence*100).toFixed(0)}% | ${sel.category} | ${primaryCurrency}`,
       };
       saveInvestment(inv);
       results.push(inv);
@@ -329,11 +347,12 @@ async function executeAutoInvest() {
     type: 'auto_invest',
     invested: results.length,
     total_invested: results.reduce((s, r) => s + r.total_ars, 0),
+    currency: primaryCurrency,
     positions: results.map(r => ({ ticker: r.ticker, qty: r.quantity, price: r.price })),
     selection,
     timestamp: new Date().toISOString(),
   };
-  console.log(`[AutoInvest] 🎯 Completado: ${results.length} posiciones | Total: $${summary.total_invested}`);
+  console.log(`[AutoInvest] 🎯 Completado: ${results.length} posiciones | Total: ${primaryCurrency} $${summary.total_invested.toFixed(2)}`);
   if (_broadcastFn) _broadcastFn(summary);
   return summary;
 }
@@ -355,7 +374,8 @@ async function monitorPositions() {
 
   for (const pos of positions) {
     try {
-      const quote        = await cocos.getQuote(pos.ticker, 'C');
+      const curr         = pos.currency || 'ARS';
+      const quote        = await cocos.getQuote(pos.ticker, 'C', curr);
       const currentPrice = quote?.last_price || quote?.close_price || 0;
       if (currentPrice <= 0) continue;
 
@@ -363,14 +383,14 @@ async function monitorPositions() {
 
       // Stop-Loss
       if (pos.stop_loss_price > 0 && currentPrice <= pos.stop_loss_price) {
-        console.log(`[AutoInvest] 🛑 STOP-LOSS ${pos.ticker}: $${currentPrice} <= $${pos.stop_loss_price} (${pnlPct.toFixed(1)}%)`);
+        console.log(`[AutoInvest] 🛑 STOP-LOSS ${pos.ticker}: ${curr} $${currentPrice} <= $${pos.stop_loss_price} (${pnlPct.toFixed(1)}%)`);
         await executeSell(pos, currentPrice, `Stop-loss: ${pnlPct.toFixed(1)}%`);
         continue;
       }
 
       // Take-Profit
       if (pos.take_profit_price > 0 && currentPrice >= pos.take_profit_price) {
-        console.log(`[AutoInvest] 🎉 TAKE-PROFIT ${pos.ticker}: $${currentPrice} >= $${pos.take_profit_price} (+${pnlPct.toFixed(1)}%)`);
+        console.log(`[AutoInvest] 🎉 TAKE-PROFIT ${pos.ticker}: ${curr} $${currentPrice} >= $${pos.take_profit_price} (+${pnlPct.toFixed(1)}%)`);
         await executeSell(pos, currentPrice, `Take-profit: +${pnlPct.toFixed(1)}%`);
         continue;
       }
@@ -389,20 +409,21 @@ async function monitorPositions() {
 
 async function executeSell(position, currentPrice, reason) {
   try {
-    const order   = await cocos.placeSellOrder(position.ticker, position.quantity, currentPrice, '24hs', 'ARS', 'C');
+    const curr    = position.currency || 'ARS';
+    const order   = await cocos.placeSellOrder(position.ticker, position.quantity, currentPrice, '24hs', curr, 'C');
     const orderId = order?.Orden || order?.id || 'OK';
     const pnl     = (currentPrice - position.price) * position.quantity;
 
     saveInvestment({
       ticker: position.ticker, action: 'SELL', quantity: position.quantity,
       price: currentPrice, total_ars: currentPrice * position.quantity,
-      order_id: orderId, status: 'EXECUTED',
-      reason: `${reason} | PnL: $${pnl.toFixed(0)}`,
+      order_id: orderId, status: 'EXECUTED', currency: curr,
+      reason: `${reason} | PnL: ${curr} $${pnl.toFixed(2)}`,
     });
 
     markClosed(position.id);
 
-    console.log(`[AutoInvest] 💰 SELL ${position.ticker} x${position.quantity} @ $${currentPrice} | PnL: $${pnl.toFixed(0)}`);
+    console.log(`[AutoInvest] 💰 SELL ${position.ticker} x${position.quantity} @ ${curr} $${currentPrice} | PnL: ${curr} $${pnl.toFixed(2)}`);
     if (_broadcastFn) _broadcastFn({
       type: 'auto_sell', ticker: position.ticker, quantity: position.quantity,
       buy_price: position.price, sell_price: currentPrice, pnl, reason,

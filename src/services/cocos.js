@@ -435,12 +435,13 @@ function getSellingPower(longTicker) {
   return _call('GET', `api/v2/orders/selling-power/?long_ticker=${encodeURIComponent(longTicker)}`);
 }
 
-async function getQuote(ticker, segment) {
+async function getQuote(ticker, segment, currency) {
   const simple = ticker.includes('-') ? ticker.split('-')[0] : ticker;
   const results = await _call('GET', `api/v1/markets/tickers/${encodeURIComponent(simple)}?segment=${segment || 'C'}`);
   if (Array.isArray(results)) {
-    return results.find(r => r.long_ticker?.includes('-0002-') && r.long_ticker?.endsWith('-ARS'))
-        || results.find(r => r.long_ticker?.endsWith('-ARS'))
+    const curr = (currency || 'ARS').toUpperCase();
+    return results.find(r => r.long_ticker?.includes('-0002-') && r.long_ticker?.endsWith(`-${curr}`))
+        || results.find(r => r.long_ticker?.endsWith(`-${curr}`))
         || results.find(r => r.long_ticker?.includes('-0002-'))
         || results[0] || {};
   }
