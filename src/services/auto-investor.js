@@ -286,14 +286,19 @@ async function executeAutoInvest() {
     return { skipped: true, reason: 'Riesgo alto', selection };
   }
 
-  // Colocar órdenes
+  // Colocar órdenes — si una falla, redistribuir su capital a las siguientes
   const stopPct = cfg.stop_loss_pct   || STOP_LOSS_PCT;
   const tpPct   = cfg.take_profit_pct || TAKE_PROFIT_PCT;
   const results = [];
+  let remainingCapital = totalInvest;
 
   for (let i = 0; i < Math.min(selection.selections.length, NUM_POSITIONS); i++) {
-    const sel        = selection.selections[i];
-    const allocation = Math.floor(totalInvest * DISTRIBUTION[i]);
+    const sel = selection.selections[i];
+    // Calcular allocation: proporción original sobre lo que queda
+    const remainingSlots = NUM_POSITIONS - i;
+    const originalPct    = DISTRIBUTION[i];
+    const totalRemPct    = DISTRIBUTION.slice(i).reduce((a, b) => a + b, 0);
+    const allocation     = Math.floor(remainingCapital * (originalPct / totalRemPct));
 
     try {
       const quote = await cocos.getQuote(sel.ticker, 'C', primaryCurrency);
@@ -337,7 +342,8 @@ async function executeAutoInvest() {
       };
       saveInvestment(inv);
       results.push(inv);
-      console.log(`[AutoInvest] ✅ Orden ${orderStatus}: ${sel.ticker} x${quantity} — #${orderId}`);
+      remainingCapital -= total;
+      console.log(`[AutoInvest] ✅ Orden ${orderStatus}: ${sel.ticker} x${quantity} — #${orderId} | Restante: ${primaryCurrency} $${remainingCapital.toFixed(2)}`);
 
       await new Promise(r => setTimeout(r, 1000));
     } catch (e) {
