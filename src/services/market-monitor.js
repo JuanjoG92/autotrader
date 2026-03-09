@@ -63,6 +63,7 @@ const DEFAULT_WATCHLIST = [
   { ticker: 'OXY',   instrument_type: 'CEDEARS',  segment: 'C', currency: 'ARS' },
   { ticker: 'XLE',   instrument_type: 'CEDEARS',  segment: 'C', currency: 'ARS' },
   { ticker: 'VIST',  instrument_type: 'ACCIONES',  segment: 'C', currency: 'ARS' },
+  { ticker: 'PBR',   instrument_type: 'CEDEARS',  segment: 'C', currency: 'ARS' },
   // ── CEDEARs Latam ──
   { ticker: 'MELI',  instrument_type: 'CEDEARS',  segment: 'C', currency: 'ARS' },
   // ── CEDEARs IA / Semiconductores ──

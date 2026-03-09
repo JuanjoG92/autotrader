@@ -32,8 +32,9 @@ function isMarketHours() {
 
 const CANDIDATES = {
   'Tech/IA':           ['NVDA','TSLA','AMD','SMCI','PLTR','META','AAPL','MSFT','AMZN','GLOB'],
-  'Energia/Petroleo':  ['XOM','CVX','OXY','VIST','XLE'],
+  'Energia/Petroleo':  ['YPFD','PAMP','VIST','XOM','CVX','OXY','XLE','PBR'],
   'ETF Diversificado': ['SPY','QQQ','SMH','GLD'],
+  'Bancos/Finanzas':   ['GGAL','BBAR','BMA','SUPV'],
 };
 
 let _checkTimer   = null;
@@ -210,11 +211,25 @@ async function executeAutoInvest() {
 
   console.log('[AutoInvest] 🚀 Mercado abierto — iniciando inversión automática…');
 
-  // Poder de compra
+  // Poder de compra (ARS + USD convertido a ARS)
   let buyingPower = 0;
+  let buyingPowerUSD = 0;
   try {
     const bp = await cocos.getBuyingPower();
     buyingPower = bp?.['24hs']?.ars || 0;
+    buyingPowerUSD = bp?.['24hs']?.usd || 0;
+    // Si hay USD, obtener dólar MEP para convertir a ARS equivalente
+    if (buyingPowerUSD > 10) {
+      let dolarMEP = 1200; // fallback
+      try {
+        const mep = await cocos.getDolarMEP();
+        dolarMEP = mep?.venta || mep?.compra || mep?.price || 1200;
+      } catch {}
+      const usdInArs = Math.floor(buyingPowerUSD * dolarMEP);
+      console.log(`[AutoInvest] USD $${buyingPowerUSD.toFixed(2)} × MEP $${dolarMEP} = ARS $${usdInArs}`);
+      buyingPower += usdInArs;
+    }
+    console.log(`[AutoInvest] Poder de compra total: ARS $${buyingPower} (USD $${buyingPowerUSD.toFixed(2)})`);
   } catch (e) {
     console.error('[AutoInvest] Error poder de compra:', e.message);
     return null;

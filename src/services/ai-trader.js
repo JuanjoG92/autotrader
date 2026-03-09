@@ -13,7 +13,7 @@ const ANALYSIS_MS  = 5 * 60 * 1000;
 const OPENAI_MODEL = 'gpt-4o-mini';
 
 const ALL_SECTORS = {
-  'Energia/Petroleo': ['YPFD', 'PAMP', 'TGNO4', 'TGSU2', 'CEPU', 'XOM', 'CVX', 'OXY', 'VIST', 'XLE'],
+  'Energia/Petroleo': ['YPFD', 'PAMP', 'TGNO4', 'TGSU2', 'CEPU', 'XOM', 'CVX', 'OXY', 'VIST', 'XLE', 'PBR'],
   'Bancos/Finanzas':  ['GGAL', 'BBAR', 'BMA', 'SUPV'],
   'Materiales':       ['ALUA', 'LOMA', 'TXAR'],
   'Tech Global':      ['AAPL', 'MSFT', 'GOOGL', 'NVDA', 'META', 'AMZN', 'TSLA', 'AMD', 'SMCI', 'PLTR'],
