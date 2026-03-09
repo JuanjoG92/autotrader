@@ -843,46 +843,51 @@ async function sniperNewListings() {
     const newListings = await checkNewListings();
     if (!newListings.length) return;
 
+    const keyInfo = _getApiKeyInfo(cfg);
+    if (!keyInfo) return;
+
+    // Leer balance una sola vez
+    let availUSDT = 0;
+    try {
+      const bal = await getBalances(keyInfo.user_id, keyInfo.id);
+      availUSDT = bal?.USDT?.free || 0;
+    } catch {}
+
     for (const listing of newListings) {
-      // Ya compramos este listing? Skip
+      // Anti-duplicado: no comprar el mismo listing 2 veces
       if (_sniperBought.has(listing.symbol)) continue;
 
-      console.log(`[Crypto] 🚀 SNIPER: Nuevo listing ${listing.symbol} @ $${listing.price} | Vol: $${Math.round(listing.volume / 1e6)}M`);
-
-      // Verificar volumen mínimo (evitar scams sin liquidez)
-      if (listing.volume < 500000) {
-        console.log(`[Crypto] 🚀 Skip ${listing.symbol} — volumen muy bajo ($${Math.round(listing.volume)})`);
-        continue;
-      }
-
-      // No comprar si ya tenemos posición
+      // Ya tenemos posición de este par? Skip
       const positions = getOpenPositions();
       if (positions.some(p => p.symbol === listing.symbol)) continue;
-      if (positions.length >= 3) {
-        console.log(`[Crypto] 🚀 Skip ${listing.symbol} — ya hay ${positions.length} posiciones abiertas`);
-        continue;
+
+      console.log(`[Crypto] 🚀 SNIPER: ${listing.symbol} @ $${listing.price} | Vol: $${Math.round(listing.volume / 1e6)}M | USDT: $${availUSDT.toFixed(0)}`);
+
+      if (availUSDT < 8) {
+        console.log(`[Crypto] 🚀 Skip — sin USDT suficiente ($${availUSDT.toFixed(2)})`);
+        break;
       }
 
-      const keyInfo = _getApiKeyInfo(cfg);
-      if (!keyInfo) continue;
-
-      // Max $10 en listings nuevos (conservador)
-      const tradeAmount = Math.min(cfg.max_per_trade_usd || 10, 10);
+      // Usar el monto configurado, sin tope artificial
+      const tradeAmount = Math.max(8, Math.min(cfg.max_per_trade_usd || 15, availUSDT * 0.40));
       try {
         const { order, price, quantity } = await _executeTrade(cfg, listing.symbol, 'buy', tradeAmount);
         const sl = Math.round(price * 0.92 * 100000) / 100000;  // -8% SL
-        const tp = Math.round(price * 1.30 * 100000) / 100000;  // +30% TP
+        const tp = Math.round(price * 1.50 * 100000) / 100000;  // +50% TP (listings suben fuerte)
         savePosition({
           symbol: listing.symbol, side: 'BUY', quantity, entry_price: price,
           stop_loss: sl, take_profit: tp, status: 'OPEN',
           order_id: 'SNIPER-' + (order?.id || Date.now()),
-          reason: `🚀 Nuevo listing detectado — Vol: $${Math.round(listing.volume / 1e6)}M`,
+          reason: `🚀 Nuevo listing — Vol: $${Math.round(listing.volume / 1e6)}M`,
         });
         _sniperBought.add(listing.symbol);
-        console.log(`[Crypto] 🚀 BUY ${listing.symbol}: ${quantity} @ $${price} | SL:$${sl}(-8%) TP:$${tp}(+30%)`);
+        availUSDT -= (quantity * price);
+        console.log(`[Crypto] 🚀 BUY ${listing.symbol}: ${quantity} @ $${price} | SL:$${sl}(-8%) TP:$${tp}(+50%)`);
       } catch (e) {
         console.error(`[Crypto] 🚀 Error sniper ${listing.symbol}: ${(e.message || '').substring(0, 60)}`);
       }
+
+      await new Promise(r => setTimeout(r, 1500)); // Pausa entre compras
     }
   } catch (e) {
     console.error('[Crypto] Sniper error:', (e.message || '').substring(0, 60));
