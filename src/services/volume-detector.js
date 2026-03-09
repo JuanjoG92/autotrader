@@ -2,7 +2,7 @@
 // Detección de anomalías de volumen + análisis sectorial de criptos
 // Método profesional: detectar pumps ANTES de que ocurran por volumen anormal
 
-const { getTopGainers, getTicker, getOHLCV, getOrderBook } = require('./binance');
+const { getTopGainers, getTicker, getOHLCV, getOrderBook, getRecentTrades } = require('./binance');
 
 // ── Sector Watchlist ──────────────────────────────────────────────────────────
 // Criptos que trackean sectores reales (tech, energía, commodities, AI)
@@ -47,7 +47,7 @@ function getSectorForSymbol(symbol) {
 }
 
 // ── Filtros de liquidez ──────────────────────────────────────────────────────
-const MIN_VOLUME_24H = 10_000_000; // Mínimo $10M vol diario (evitar shitcoins ilíquidas)
+const MIN_VOLUME_24H = 5_000_000;  // Mínimo $5M vol diario (balance: filtrar basura pero no perder alts volátiles)
 const MAX_PUMP_24H = 25;           // Si +25% ya fue, probablemente final de pump
 
 // ── EMA (Exponential Moving Average) ──────────────────────────────────────────
@@ -139,6 +139,9 @@ async function detectVolumeSpikes(minRatio) {
           const atrPct = currentPrice > 0 ? (atr / currentPrice) * 100 : 0;
           const hasVolatility = atrPct > 0.5; // al menos 0.5% de rango por vela
 
+          // Volatility Compression: ATR bajo + volumen subiendo = pre-pump setup
+          const compression = detectVolatilityCompression(candles);
+
           const sector = getSectorForSymbol(coin.symbol);
 
           spikes.push({
@@ -154,10 +157,11 @@ async function detectVolumeSpikes(minRatio) {
             breakout6h,
             atrPct: Math.round(atrPct * 10) / 10,
             hasVolatility,
+            compressed: compression.compressed,
             dropFromHigh: Math.round(dropFromHigh * 10) / 10,
             sector: sector ? sector.label : null,
             sectorKey: sector ? sector.key : null,
-            score: _calcSpikeScore(spikeRatio, trendUp, nearHigh, coin.change24h, breakout6h, hasVolatility, coin.volume),
+            score: _calcSpikeScore(spikeRatio, trendUp, nearHigh, coin.change24h, breakout6h, hasVolatility, coin.volume, compression.compressed),
           });
         }
 
@@ -177,7 +181,7 @@ async function detectVolumeSpikes(minRatio) {
   return spikes;
 }
 
-function _calcSpikeScore(spikeRatio, trendUp, nearHigh, change24h, breakout6h, hasVolatility, volume24h) {
+function _calcSpikeScore(spikeRatio, trendUp, nearHigh, change24h, breakout6h, hasVolatility, volume24h, compressed) {
   let score = 0;
 
   // Volumen anormal (factor principal)
@@ -196,6 +200,9 @@ function _calcSpikeScore(spikeRatio, trendUp, nearHigh, change24h, breakout6h, h
 
   // Volatilidad real (evitar mercados muertos)
   if (hasVolatility) score += 1;
+
+  // Volatility Compression: setup pre-pump (ATR bajo + vol subiendo)
+  if (compressed) score += 2;
 
   // Liquidez alta = señal más confiable
   if (volume24h >= 50_000_000) score += 2;      // >$50M = muy líquido
@@ -467,6 +474,44 @@ function shouldKillSwitch(db, maxLossPct) {
   }
 }
 
+// ── CVD Aproximado (Cumulative Volume Delta) ──────────────────────────────────
+// Aproxima quién domina: compradores agresivos vs vendedores agresivos
+// trade.price >= ask → buyer aggressive, trade.price <= bid → seller aggressive
+// CVD positivo = acumulación (bullish), negativo = distribución (bearish)
+
+async function getApproxCVD(symbol) {
+  try {
+    const trades = await getRecentTrades(symbol, 200);
+    if (!trades || trades.length < 20) return { cvd: 0, buyPct: 50, total: 0 };
+
+    let buyVol = 0, sellVol = 0;
+    for (const t of trades) {
+      const vol = (t.price || 0) * (t.amount || 0);
+      // ccxt: t.side = 'buy' si el taker es comprador (market buy)
+      if (t.side === 'buy') {
+        buyVol += vol;
+      } else {
+        sellVol += vol;
+      }
+    }
+
+    const total = buyVol + sellVol;
+    const cvd = buyVol - sellVol;
+    const buyPct = total > 0 ? Math.round((buyVol / total) * 100) : 50;
+
+    return {
+      cvd: Math.round(cvd),
+      buyVol: Math.round(buyVol),
+      sellVol: Math.round(sellVol),
+      buyPct,
+      total: Math.round(total),
+      signal: buyPct >= 60 ? 'BUYERS' : buyPct <= 40 ? 'SELLERS' : 'NEUTRAL',
+    };
+  } catch {
+    return { cvd: 0, buyPct: 50, total: 0, signal: 'NEUTRAL' };
+  }
+}
+
 module.exports = {
   SECTOR_CRYPTOS,
   MIN_VOLUME_24H,
@@ -482,4 +527,5 @@ module.exports = {
   detectVolatilityCompression,
   getBTCTrend,
   shouldKillSwitch,
+  getApproxCVD,
 };

@@ -496,4 +496,16 @@ async function getOrderBook(symbol, depth) {
   }
 }
 
-module.exports = { getBalances, getTicker, getOHLCV, createOrder, testConnection, getExchangeForUser, getTopPairs, getTopGainers, checkNewListings, getFirstBinanceBalance, resaveApiKey, getMarketInfo, formatAmount, getOrderBook, SUPPORTED_EXCHANGES };
+// ── Recent Trades: para CVD aproximado ──────────────────────────────────────
+
+async function getRecentTrades(symbol, limit) {
+  try {
+    const exchange = _getSharedExchange();
+    const trades = await exchange.fetchTrades(symbol, undefined, limit || 100);
+    return trades;
+  } catch (e) {
+    return [];
+  }
+}
+
+module.exports = { getBalances, getTicker, getOHLCV, createOrder, testConnection, getExchangeForUser, getTopPairs, getTopGainers, checkNewListings, getFirstBinanceBalance, resaveApiKey, getMarketInfo, formatAmount, getOrderBook, getRecentTrades, SUPPORTED_EXCHANGES };
