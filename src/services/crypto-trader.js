@@ -509,14 +509,7 @@ JSON:
 
     // ── Ejecutar señales: SELLS PRIMERO, luego re-leer balance, luego BUYS ──
     const sells = (result.signals || []).filter(s => s.action === 'SELL' && s.symbol && (s.confidence || 0) >= cfg.min_confidence);
-    // RESTRICCIÓN: solo comprar criptos estables (BASE_CRYPTOS)
-    const buys  = (result.signals || []).filter(s =>
-      s.action === 'BUY' && s.symbol && (s.confidence || 0) >= cfg.min_confidence
-      && BASE_CRYPTOS.includes(s.symbol)
-    );
-    // Log si la IA sugirió algo fuera de la lista
-    const blocked = (result.signals || []).filter(s => s.action === 'BUY' && s.symbol && !BASE_CRYPTOS.includes(s.symbol));
-    if (blocked.length) console.log(`[Crypto] ❌ Bloqueado ${blocked.map(b => b.symbol).join(', ')} — solo ${BASE_CRYPTOS.join(', ')}`);
+    const buys  = (result.signals || []).filter(s => s.action === 'BUY'  && s.symbol && (s.confidence || 0) >= cfg.min_confidence);
 
     // Paso A: Ejecutar SELLS — SOLO si posición realmente tocó stop-loss
     for (const sig of sells) {
@@ -837,7 +830,68 @@ async function syncBinanceWallet() {
   }
 }
 
+// ── Sniper de Nuevos Listings ─────────────────────────────────────────────────
+// Detecta criptos recién listadas en Binance. Suelen subir fuerte las primeras horas.
+
+const _sniperBought = new Set(); // Evitar comprar el mismo listing 2 veces
+
+async function sniperNewListings() {
+  const cfg = getConfig();
+  if (!cfg.enabled) return;
+
+  try {
+    const newListings = await checkNewListings();
+    if (!newListings.length) return;
+
+    for (const listing of newListings) {
+      // Ya compramos este listing? Skip
+      if (_sniperBought.has(listing.symbol)) continue;
+
+      console.log(`[Crypto] 🚀 SNIPER: Nuevo listing ${listing.symbol} @ $${listing.price} | Vol: $${Math.round(listing.volume / 1e6)}M`);
+
+      // Verificar volumen mínimo (evitar scams sin liquidez)
+      if (listing.volume < 500000) {
+        console.log(`[Crypto] 🚀 Skip ${listing.symbol} — volumen muy bajo ($${Math.round(listing.volume)})`);
+        continue;
+      }
+
+      // No comprar si ya tenemos posición
+      const positions = getOpenPositions();
+      if (positions.some(p => p.symbol === listing.symbol)) continue;
+      if (positions.length >= 3) {
+        console.log(`[Crypto] 🚀 Skip ${listing.symbol} — ya hay ${positions.length} posiciones abiertas`);
+        continue;
+      }
+
+      const keyInfo = _getApiKeyInfo(cfg);
+      if (!keyInfo) continue;
+
+      // Max $10 en listings nuevos (conservador)
+      const tradeAmount = Math.min(cfg.max_per_trade_usd || 10, 10);
+      try {
+        const { order, price, quantity } = await _executeTrade(cfg, listing.symbol, 'buy', tradeAmount);
+        const sl = Math.round(price * 0.92 * 100000) / 100000;  // -8% SL
+        const tp = Math.round(price * 1.30 * 100000) / 100000;  // +30% TP
+        savePosition({
+          symbol: listing.symbol, side: 'BUY', quantity, entry_price: price,
+          stop_loss: sl, take_profit: tp, status: 'OPEN',
+          order_id: 'SNIPER-' + (order?.id || Date.now()),
+          reason: `🚀 Nuevo listing detectado — Vol: $${Math.round(listing.volume / 1e6)}M`,
+        });
+        _sniperBought.add(listing.symbol);
+        console.log(`[Crypto] 🚀 BUY ${listing.symbol}: ${quantity} @ $${price} | SL:$${sl}(-8%) TP:$${tp}(+30%)`);
+      } catch (e) {
+        console.error(`[Crypto] 🚀 Error sniper ${listing.symbol}: ${(e.message || '').substring(0, 60)}`);
+      }
+    }
+  } catch (e) {
+    console.error('[Crypto] Sniper error:', (e.message || '').substring(0, 60));
+  }
+}
+
 // ── Init / Control ────────────────────────────────────────────────────────────
+
+let _sniperTimer = null;
 
 function init(broadcastFn) {
   _broadcastFn = broadcastFn;
@@ -846,6 +900,7 @@ function init(broadcastFn) {
 
   if (_timer) clearInterval(_timer);
   if (_monitorTimer) clearInterval(_monitorTimer);
+  if (_sniperTimer) clearInterval(_sniperTimer);
 
   _timer = setInterval(async () => {
     try { await runAnalysis(); } catch (e) { console.error('[Crypto]', e.message); }
@@ -855,7 +910,12 @@ function init(broadcastFn) {
     try { await monitorPositions(); } catch (e) { console.error('[Crypto] Monitor:', e.message); }
   }, 30 * 1000);
 
-  console.log(`[Crypto] Iniciado — AI cada ${cfg.analysis_interval_min || 3}min, monitor 30s | SOLO ${BASE_CRYPTOS.join(', ')}`);
+  // Sniper: detectar nuevos listings cada 1 minuto
+  _sniperTimer = setInterval(async () => {
+    try { await sniperNewListings(); } catch (e) { console.error('[Crypto] Sniper:', e.message); }
+  }, 60 * 1000);
+
+  console.log(`[Crypto] Iniciado — AI cada ${cfg.analysis_interval_min || 3}min, monitor 30s, sniper 1min`);
 
   // Primer análisis (15s para que cargue todo)
   setTimeout(async () => {
