@@ -1,0 +1,12 @@
+#!/bin/bash
+echo "=== PnL desde el restart ==="
+sqlite3 /var/www/autotrader/data/autotrader.db "SELECT round(sum(pnl),4) as total_pnl, count(*) as trades FROM crypto_positions WHERE status = 'CLOSED' AND id >= 73;"
+echo ""
+echo "=== Detalle trades recientes ==="
+sqlite3 /var/www/autotrader/data/autotrader.db "SELECT id, symbol, round(pnl,4) as pnl, round(entry_price,6) as entry, round(sell_price,6) as sell, substr(reason,1,50) as reason FROM crypto_positions WHERE id >= 73 AND status = 'CLOSED' ORDER BY id;"
+echo ""
+echo "=== Posiciones OPEN ==="
+sqlite3 /var/www/autotrader/data/autotrader.db "SELECT id, symbol, round(quantity,4) as qty, round(entry_price,6) as entry, round(current_price,6) as cur, round(stop_loss,6) as sl FROM crypto_positions WHERE status = 'OPEN';"
+echo ""
+echo "=== Config actual ==="
+sqlite3 /var/www/autotrader/data/autotrader.db "SELECT stop_loss_pct, take_profit_pct, analysis_interval_min, max_per_trade_usd, enabled FROM crypto_config WHERE id = 1;"
