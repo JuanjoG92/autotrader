@@ -923,8 +923,8 @@ async function _executeSellPosition(cfg, pos, reason) {
 }
 
 // ── Sync: detectar criptos en Binance no trackeadas por el bot ────────────────
-// Si el usuario compró manualmente (ej: XRP), el bot no sabe. Esta función
-// escanea el balance de Binance y crea posiciones para monitorear/vender.
+// Escanea el balance REAL de Binance y crea posiciones para TODAS las criptos
+// que el bot no esté monitoreando. Así puede vender cuando bajen.
 
 async function syncBinanceWallet() {
   const cfg = getConfig();
@@ -939,7 +939,7 @@ async function syncBinanceWallet() {
     let synced = 0;
 
     for (const [coin, info] of Object.entries(balance)) {
-      if (coin === 'USDT' || coin === 'ARS' || !info.total || info.total <= 0) continue;
+      if (coin === 'USDT' || coin === 'ARS' || !info.free || info.free <= 0) continue;
       const symbol = coin + '/USDT';
 
       // Ya tiene posición abierta? → skip
@@ -950,21 +950,32 @@ async function syncBinanceWallet() {
       try { const t = await getTicker(symbol); price = t?.last || 0; } catch {}
       if (price <= 0) continue;
 
-      const value = info.total * price;
-      if (value < 6) continue; // Ignorar dust (<$6, Binance no deja vender <$5)
+      const qty = info.free;
+      const value = qty * price;
+      if (value < 5) continue; // Ignorar dust (<$5)
 
-      // Crear posición de tracking con precio actual como entrada
-      const sl = Math.round(price * (1 - (cfg.stop_loss_pct || 5) / 100) * 10000) / 10000;
-      const tp = Math.round(price * (1 + (cfg.take_profit_pct || 15) / 100) * 10000) / 10000;
-      const qty = info.total;
+      // Intentar encontrar precio real de entrada desde posiciones cerradas
+      let entryPrice = price;
+      try {
+        const lastClosed = getDB().prepare(
+          "SELECT entry_price FROM crypto_positions WHERE symbol = ? ORDER BY id DESC LIMIT 1"
+        ).get(symbol);
+        if (lastClosed && lastClosed.entry_price > 0) {
+          entryPrice = lastClosed.entry_price;
+        }
+      } catch {}
+
+      const sl = Math.round(entryPrice * (1 - (cfg.stop_loss_pct || 5) / 100) * 100000) / 100000;
+      const tp = Math.round(entryPrice * (1 + (cfg.take_profit_pct || 15) / 100) * 100000) / 100000;
 
       savePosition({
-        symbol, side: 'BUY', quantity: qty, entry_price: price,
+        symbol, side: 'BUY', quantity: qty, entry_price: entryPrice,
         stop_loss: sl, take_profit: tp, status: 'OPEN',
-        order_id: 'SYNC-' + Date.now(), reason: `Sincronizado desde wallet Binance ($${value.toFixed(2)})`,
+        order_id: 'SYNC-' + Date.now(), reason: `Sincronizado desde wallet ($${value.toFixed(2)}, entry:$${entryPrice})`,
       });
       synced++;
-      console.log(`[Crypto] 🔄 SYNC ${symbol}: ${qty} @ $${price} (~$${value.toFixed(2)}) | SL:$${sl} TP:$${tp}`);
+      console.log(`[Crypto] 🔄 SYNC ${symbol}: ${qty} @ entry $${entryPrice} (actual $${price}, ~$${value.toFixed(2)}) | SL:$${sl} TP:$${tp}`);
+      await new Promise(r => setTimeout(r, 300));
     }
 
     if (synced > 0) console.log(`[Crypto] 🔄 ${synced} criptos sincronizadas desde Binance`);
@@ -1054,6 +1065,7 @@ async function sniperNewListings() {
 // ── Init / Control ────────────────────────────────────────────────────────────
 
 let _sniperTimer = null;
+let _syncTimer = null;
 
 function init(broadcastFn) {
   _broadcastFn = broadcastFn;
@@ -1063,6 +1075,7 @@ function init(broadcastFn) {
   if (_timer) clearInterval(_timer);
   if (_monitorTimer) clearInterval(_monitorTimer);
   if (_sniperTimer) clearInterval(_sniperTimer);
+  if (_syncTimer) clearInterval(_syncTimer);
 
   _timer = setInterval(async () => {
     try { await runAnalysis(); } catch (e) { console.error('[Crypto]', e.message); }
@@ -1077,12 +1090,22 @@ function init(broadcastFn) {
     try { await sniperNewListings(); } catch (e) { console.error('[Crypto] Sniper:', e.message); }
   }, 60 * 1000);
 
-  console.log(`[Crypto] Iniciado — AI cada ${cfg.analysis_interval_min || 3}min, monitor 30s, sniper 1min`);
+  // Sync wallet: detectar criptos no trackeadas cada 5 minutos
+  _syncTimer = setInterval(async () => {
+    try { await syncBinanceWallet(); } catch (e) { console.error('[Crypto] Sync:', e.message); }
+  }, 5 * 60 * 1000);
 
-  // Primer análisis (15s para que cargue todo)
+  console.log(`[Crypto] Iniciado — AI cada ${cfg.analysis_interval_min || 3}min, monitor 30s, sniper 1min, sync 5min`);
+
+  // Sync wallet PRIMERO (10s) — detectar todas las criptos en Binance
+  setTimeout(async () => {
+    try { await syncBinanceWallet(); } catch (e) { console.error('[Crypto] Sync inicial:', e.message); }
+  }, 10000);
+
+  // Primer análisis (20s para que cargue todo)
   setTimeout(async () => {
     try { await runAnalysis(); } catch (e) { console.error('[Crypto] Inicial:', e.message); }
-  }, 15000);
+  }, 20000);
 }
 
 function getStatus() {
