@@ -256,10 +256,10 @@ async function _checkBuyConditions(symbol, change24h) {
 // ── Control de trades recientes ───────────────────────────────────────────────
 
 function _getTodayTradeCount() {
-  // Contar trades de las últimas 8 horas (no desde medianoche UTC)
+  // Contar solo trades del TRADER IA en las últimas 8h (excluir SCALP y SYNC)
   const cutoff = new Date(Date.now() - 8 * 60 * 60 * 1000).toISOString();
   const row = getDB().prepare(
-    "SELECT COUNT(*) as cnt FROM crypto_positions WHERE order_id NOT LIKE 'PAPER%' AND created_at >= ? AND side = 'BUY'"
+    "SELECT COUNT(*) as cnt FROM crypto_positions WHERE order_id NOT LIKE 'PAPER%' AND order_id NOT LIKE 'SCALP%' AND order_id NOT LIKE 'SYNC%' AND order_id NOT LIKE 'SNIPER%' AND created_at >= ? AND side = 'BUY'"
   ).get(cutoff);
   return row?.cnt || 0;
 }
