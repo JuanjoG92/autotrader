@@ -20,6 +20,7 @@ const aiTrader     = require('./src/services/ai-trader');
 const newsFetcher  = require('./src/services/news-fetcher');
 const autoInvestor = require('./src/services/auto-investor');
 const cryptoTrader = require('./src/services/crypto-trader');
+const scalper      = require('./src/services/scalper');
 const cryptoRoutes = require('./src/routes/crypto');
 
 const app = express();
@@ -56,6 +57,7 @@ app.use('/api/crypto',  cryptoRoutes);
 app.get('/api/health', (req, res) => {
   const health = cocos.getHealth ? cocos.getHealth() : { ready: cocos.isReady() };
   const cryptoStatus = cryptoTrader.getStatus ? cryptoTrader.getStatus() : {};
+  const scalperStatus = scalper.getStatus ? scalper.getStatus() : {};
   const status = health.ready ? 'ok' : 'degraded';
   res.status(health.ready ? 200 : 503).json({
     status,
@@ -63,6 +65,7 @@ app.get('/api/health', (req, res) => {
     memory: Math.round(process.memoryUsage().rss / 1024 / 1024) + ' MB',
     cocos: health,
     crypto: cryptoStatus,
+    scalper: scalperStatus,
     timestamp: new Date().toISOString(),
   });
 });
@@ -107,6 +110,7 @@ aiTrader.init(broadcast);
 newsFetcher.init();
 autoInvestor.init(broadcast);
 cryptoTrader.init(broadcast);
+scalper.init(broadcast);
 
 server.listen(PORT, () => {
   console.log(`AutoTrader running on port ${PORT}`);

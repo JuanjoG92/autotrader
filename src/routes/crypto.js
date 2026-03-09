@@ -5,6 +5,7 @@ const express = require('express');
 const router  = express.Router();
 const crypto  = require('../services/crypto-trader');
 const binance = require('../services/binance');
+const volDetector = require('../services/volume-detector');
 const { getDB } = require('../models/db');
 
 // Estado general
@@ -108,6 +109,27 @@ router.get('/gainers', async (req, res) => {
     const gainers = await binance.getTopGainers(12);
     res.json(gainers);
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Volume spikes: anomalías de volumen (coins con dinero entrando)
+router.get('/volume-spikes', async (req, res) => {
+  try {
+    const spikes = await volDetector.detectVolumeSpikes(2.5);
+    res.json(spikes);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Análisis sectorial (Tech/AI, Energía, RWA, DeFi, Commodities)
+router.get('/sectors', async (req, res) => {
+  try {
+    const sectors = await volDetector.analyzeSectors();
+    res.json(sectors);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Lista de sectores y pares
+router.get('/sector-pairs', (req, res) => {
+  res.json(volDetector.SECTOR_CRYPTOS);
 });
 
 // Orden manual crypto

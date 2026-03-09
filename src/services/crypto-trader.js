@@ -7,12 +7,15 @@ const { getOpenAIToken } = require('./ai-token');
 const { getBalances, getTicker, getTopPairs, getTopGainers, checkNewListings, createOrder, getExchangeForUser, getMarketInfo, formatAmount, getOHLCV } = require('./binance');
 const news               = require('./news-fetcher');
 const rag                = require('./rag');
+const volDetector        = require('./volume-detector');
 
 const OPENAI_MODEL = 'gpt-4o-mini';
 
 // Base: siempre monitorear estas (referencia)
 const BASE_CRYPTOS = ['BTC/USDT', 'ETH/USDT', 'BNB/USDT', 'SOL/USDT'];
-// Las demás se eligen DINÁMICAMENTE según top gainers 24h en Binance
+// Sectoriales: tech, energía, RWA (se agregan dinámicamente)
+const SECTOR_PAIRS = volDetector.getAllSectorPairs();
+// Las demás se eligen DINÁMICAMENTE según top gainers 24h + sectores + volumen
 
 let _timer = null;
 let _monitorTimer = null;
@@ -67,7 +70,7 @@ function getPositionHistory(limit) {
   return getDB().prepare("SELECT * FROM crypto_positions WHERE order_id NOT LIKE 'PAPER%' ORDER BY created_at DESC LIMIT ?").all(limit || 30);
 }
 
-// ── Datos de mercado (dinámico: base coins + top gainers 24h) ───────────
+// ── Datos de mercado (dinámico: base + gainers + sectores + volume spikes) ──
 
 async function getMarketData(cfg) {
   const rows = [];
@@ -78,25 +81,43 @@ async function getMarketData(cfg) {
     // 1. Top gainers dinámicos de Binance (las que más suben hoy)
     const gainers = await getTopGainers(8);
     if (gainers.length > 0) {
-      // Agregar gainers que no estén en la lista base
       for (const g of gainers) {
         if (!activePairs.includes(g.symbol)) activePairs.push(g.symbol);
       }
-      // Max 12 pares para no sobrecargar el prompt
-      activePairs = activePairs.slice(0, 12);
     }
 
-    // 2. Obtener datos de todos (base + gainers) en batch
+    // 2. Agregar pares sectoriales clave (tech, energía, RWA)
+    const sectorTop = ['FET/USDT', 'RNDR/USDT', 'INJ/USDT', 'LINK/USDT', 'ONDO/USDT'];
+    for (const sp of sectorTop) {
+      if (!activePairs.includes(sp)) activePairs.push(sp);
+    }
+
+    // Max 16 pares para no sobrecargar el prompt
+    activePairs = activePairs.slice(0, 16);
+
+    // 3. Obtener datos de todos (base + gainers + sectores) en batch
     const topData = await getTopPairs();
     // Merge: topData tiene 20 pares fijos, gainers tiene las dinámicas
     const allData = [...(topData || [])];
     for (const g of gainers) {
       if (!allData.find(d => d.symbol === g.symbol)) allData.push(g);
     }
+    // Fetch sector pairs que no estén en allData
+    for (const sp of activePairs) {
+      if (!allData.find(d => d.symbol === sp)) {
+        try {
+          const t = await getTicker(sp);
+          if (t && t.last > 0) {
+            allData.push({ symbol: sp, price: t.last, change24h: t.percentage || 0, volume: t.quoteVolume || 0, high: t.high || 0, low: t.low || 0 });
+          }
+        } catch {}
+      }
+    }
 
-    // Separar en secciones: BASE y GAINERS
+    // Separar en secciones: BASE, GAINERS, SECTORES
     const basePairs = [];
     const gainerPairs = [];
+    const sectorPairsDisplay = [];
 
     for (const pair of activePairs) {
       const t = allData.find(d => d.symbol === pair);
@@ -104,9 +125,13 @@ async function getMarketData(cfg) {
       prices[pair] = t.price;
       const momentum = t.momentumScore ? ` | Momentum: ${t.momentumScore}` : '';
       const drop = t.dropFromHigh !== undefined ? ` | Drop: -${t.dropFromHigh}%` : '';
-      const line = `${pair}: $${t.price.toFixed(t.price < 1 ? 4 : 2)} | 24h: ${t.change24h >= 0 ? '+' : ''}${t.change24h.toFixed(1)}% | Vol: $${Math.round(t.volume / 1e6)}M${momentum}${drop}`;
+      const sector = volDetector.getSectorForSymbol(pair);
+      const sectorTag = sector ? ` [${sector.key}]` : '';
+      const line = `${pair}: $${t.price.toFixed(t.price < 1 ? 4 : 2)} | 24h: ${t.change24h >= 0 ? '+' : ''}${t.change24h.toFixed(1)}% | Vol: $${Math.round(t.volume / 1e6)}M${momentum}${drop}${sectorTag}`;
       if (BASE_CRYPTOS.includes(pair)) {
         basePairs.push(line);
+      } else if (sector) {
+        sectorPairsDisplay.push(line);
       } else {
         gainerPairs.push(line);
       }
@@ -114,6 +139,7 @@ async function getMarketData(cfg) {
 
     if (basePairs.length) rows.push('BASE:', ...basePairs);
     if (gainerPairs.length) rows.push('\nTOP GAINERS 24H (dinámico):', ...gainerPairs);
+    if (sectorPairsDisplay.length) rows.push('\nSECTORES (Tech/AI, Energía, RWA):', ...sectorPairsDisplay);
 
     console.log(`[Crypto] ${activePairs.length} pares (${BASE_CRYPTOS.length} base + ${gainers.length} gainers)`);
   } catch (e) {
@@ -438,7 +464,8 @@ async function runAnalysis() {
         const dropFromHigh = ((recentHigh - currentPrice) / recentHigh) * 100;
         const gainer = allGainers.find(g => g.symbol === symbol);
         const change = gainer?.change24h || 0;
-        technicalData.push({ symbol, rsi: Math.round(rsi), change: Math.round(change), dropFromHigh: Math.round(dropFromHigh * 10) / 10 });
+        const sector = volDetector.getSectorForSymbol(symbol);
+        technicalData.push({ symbol, rsi: Math.round(rsi), change: Math.round(change), dropFromHigh: Math.round(dropFromHigh * 10) / 10, sector: sector?.label || null });
       }
     } catch {}
     await new Promise(r => setTimeout(r, 200));
@@ -450,23 +477,43 @@ async function runAnalysis() {
       if (candles && candles.length >= 16) {
         const closes = candles.map(c => c[4]);
         const rsi = _calculateRSI(closes);
-        technicalData.push({ symbol, rsi: Math.round(rsi), change: 0, dropFromHigh: 0 });
+        technicalData.push({ symbol, rsi: Math.round(rsi), change: 0, dropFromHigh: 0, sector: null });
       }
     } catch {}
     await new Promise(r => setTimeout(r, 200));
   }
 
+  // ── DETECCIÓN DE ANOMALÍAS DE VOLUMEN (Volume Spike Detection) ──
+  let volumeSpikes = [];
+  try {
+    volumeSpikes = await volDetector.detectVolumeSpikes(2.5);
+  } catch {}
+
   const techCtx = technicalData.length
-    ? technicalData.map(t => `${t.symbol}: RSI=${t.rsi} | 24h=${t.change >= 0 ? '+' : ''}${t.change}% | Drop=-${t.dropFromHigh}%`).join('\n')
+    ? technicalData.map(t => {
+        const sectorTag = t.sector ? ` | Sector: ${t.sector}` : '';
+        return `${t.symbol}: RSI=${t.rsi} | 24h=${t.change >= 0 ? '+' : ''}${t.change}% | Drop=-${t.dropFromHigh}%${sectorTag}`;
+      }).join('\n')
     : 'Sin datos técnicos.';
 
-  const prompt = `CRYPTO TRADER — Binance Spot — DATOS TÉCNICOS REALES
+  const volCtx = volumeSpikes.length
+    ? volumeSpikes.slice(0, 5).map(v => {
+        const sectorTag = v.sector ? ` | Sector: ${v.sector}` : '';
+        const trend = v.trendUp ? 'ALCISTA' : 'lateral';
+        return `${v.symbol}: Vol ${v.spikeRatio}x promedio | Score:${v.score} | Trend:${trend} | 24h:${v.change24h >= 0 ? '+' : ''}${v.change24h.toFixed(0)}%${sectorTag}`;
+      }).join('\n')
+    : 'Sin anomalías de volumen.';
+
+  const prompt = `CRYPTO TRADER — Binance Spot — DATOS TÉCNICOS + VOLUMEN + SECTORES
 
 MERCADO:
 ${marketCtx}
 
 INDICADORES TÉCNICOS REALES (RSI 14 en velas 15min):
 ${techCtx}
+
+ANOMALÍAS DE VOLUMEN (coins con volumen anormal = dinero entrando):
+${volCtx}
 
 BALANCE: ${balanceCtx} | USDT libre: $${availableUSDT.toFixed(0)} | Invertir ~$${positionSize} por operación
 
@@ -475,16 +522,17 @@ POSICIONES ABIERTAS: ${posCtx}
 NOTICIAS: ${newsCtx}
 
 REGLAS DE TRADING:
-1. COMPRAR si RSI < 70 (no sobrecomprada) Y precio cerca del máximo reciente (drop < 3%).
-2. Preferir RSI 30-55 (mejor zona de entrada) y volumen >$3M.
-3. Cualquier cripto puede ser buena si RSI es favorable — no importa si subió 5% o 50%.
-4. SELL solo si posición bajó más de -${cfg.stop_loss_pct || 5}% desde entrada.
-5. Sin USDT libre → HOLD. Posiciones en ganancia → HOLD.
-6. amount_usd = $${positionSize}. Confidence > 0.80 solo con RSI favorable.
-7. Si NINGUNA cripto tiene RSI favorable → NO dar BUY. Esperar es válido.
+1. COMPRAR si RSI < 70 Y precio cerca del máximo reciente (drop < 3%).
+2. PRIORIZAR coins con anomalía de volumen (spike >= 3x) — indica pump inminente.
+3. Preferir RSI 30-55 (mejor zona de entrada) y volumen >$3M.
+4. Coins de sectores Tech/AI, Energía, RWA tienen tendencia alcista a largo plazo — darles preferencia.
+5. SELL solo si posición bajó más de -${cfg.stop_loss_pct || 5}% desde entrada.
+6. Sin USDT libre → HOLD. Posiciones en ganancia → HOLD.
+7. amount_usd = $${positionSize}. Confidence > 0.80 solo con RSI favorable + volumen alto.
+8. Si NINGUNA cripto tiene RSI favorable → NO dar BUY. Esperar es válido.
 
 JSON:
-{"signals":[{"symbol":"XXX/USDT","action":"BUY|SELL|HOLD","confidence":0.85,"amount_usd":${positionSize},"reason":"RSI=XX, ..."}],"analysis":"breve","market_sentiment":"BULLISH|BEARISH|NEUTRAL","watchlist":[]}`;
+{"signals":[{"symbol":"XXX/USDT","action":"BUY|SELL|HOLD","confidence":0.85,"amount_usd":${positionSize},"reason":"RSI=XX, Vol:Xx, ..."}],"analysis":"breve","market_sentiment":"BULLISH|BEARISH|NEUTRAL","watchlist":[]}`;
 
   try {
     const res = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -493,7 +541,7 @@ JSON:
       body: JSON.stringify({
         model: OPENAI_MODEL, temperature: 0.2, max_tokens: 800,
         messages: [
-          { role: 'system', content: 'Eres un trader técnico. Decides basándote en RSI y precio vs máximo reciente. RSI < 70 y precio cerca del high = comprar. RSI > 70 o precio cayendo = esperar. Si nada cumple, no dar BUY. JSON válido siempre.' },
+          { role: 'system', content: 'Eres un trader técnico cuantitativo. Decides basándote en: 1) RSI y precio vs máximo, 2) anomalías de volumen (spike = dinero entrando), 3) sectores (tech/AI, energía, RWA suben a largo plazo). Prioriza coins con volume spike alto + RSI favorable. Si nada cumple, NO dar BUY. JSON válido siempre.' },
           { role: 'user', content: prompt },
         ],
         response_format: { type: 'json_object' },
@@ -586,6 +634,7 @@ JSON:
       const change24h = gainerData?.change24h || techData?.change || 0;
 
       // Validar con datos técnicos pre-calculados o en tiempo real
+      let validatedRSI = '?';
       if (techData && techData.rsi > 0) {
         if (techData.rsi > 70) {
           console.log(`[Crypto] ❌ BLOQUEADO ${sig.symbol}: RSI=${techData.rsi} > 70`);
@@ -595,13 +644,18 @@ JSON:
           console.log(`[Crypto] ❌ BLOQUEADO ${sig.symbol}: cayendo ${techData.dropFromHigh}% del máximo`);
           continue;
         }
-        console.log(`[Crypto] ✓ ${sig.symbol}: RSI=${techData.rsi}, +${change24h.toFixed(0)}%, drop=${techData.dropFromHigh}% — OK`);
+        validatedRSI = techData.rsi;
+        const volSpike = volumeSpikes.find(v => v.symbol === sig.symbol);
+        const volTag = volSpike ? ` | Vol:${volSpike.spikeRatio}x` : '';
+        console.log(`[Crypto] ✓ ${sig.symbol}: RSI=${techData.rsi}, +${change24h.toFixed(0)}%, drop=${techData.dropFromHigh}%${volTag} — OK`);
       } else {
-        const buyCheck = await _checkBuyConditions(sig.symbol, change24h);
-        if (!buyCheck.ok) {
-          console.log(`[Crypto] ❌ BLOQUEADO ${sig.symbol}: ${buyCheck.reason}`);
+        // Multi-timeframe: verificar tendencia 1h + RSI 15m
+        const mtf = await volDetector.multiTimeframeCheck(sig.symbol);
+        if (!mtf.ok) {
+          console.log(`[Crypto] ❌ BLOQUEADO ${sig.symbol}: ${mtf.reason}`);
           continue;
         }
+        validatedRSI = mtf.rsi15m || '?';
       }
 
       try {
@@ -613,7 +667,7 @@ JSON:
           stop_loss: sl, take_profit: tp, status: 'OPEN',
           order_id: order?.id || '', reason: sig.reason,
         });
-        console.log(`[Crypto] ✅ BUY ${sig.symbol}: ${quantity} @ $${price} | SL:$${sl} TP:$${tp} | RSI:${buyCheck.rsi?.toFixed(0) || '?'}`);
+        console.log(`[Crypto] ✅ BUY ${sig.symbol}: ${quantity} @ $${price} | SL:$${sl} TP:$${tp} | RSI:${validatedRSI}`);
         availableUSDT -= (quantity * price);
       } catch (e) {
         console.error(`[Crypto] Error BUY ${sig.symbol}:`, e.message);
