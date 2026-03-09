@@ -20,7 +20,6 @@ const aiTrader     = require('./src/services/ai-trader');
 const newsFetcher  = require('./src/services/news-fetcher');
 const autoInvestor = require('./src/services/auto-investor');
 const cryptoTrader = require('./src/services/crypto-trader');
-const scalper      = require('./src/services/scalper');
 const cryptoRoutes = require('./src/routes/crypto');
 
 const app = express();
@@ -108,7 +107,6 @@ aiTrader.init(broadcast);
 newsFetcher.init();
 autoInvestor.init(broadcast);
 cryptoTrader.init(broadcast);
-scalper.init(broadcast);
 
 server.listen(PORT, () => {
   console.log(`AutoTrader running on port ${PORT}`);

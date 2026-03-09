@@ -509,7 +509,14 @@ JSON:
 
     // ── Ejecutar señales: SELLS PRIMERO, luego re-leer balance, luego BUYS ──
     const sells = (result.signals || []).filter(s => s.action === 'SELL' && s.symbol && (s.confidence || 0) >= cfg.min_confidence);
-    const buys  = (result.signals || []).filter(s => s.action === 'BUY'  && s.symbol && (s.confidence || 0) >= cfg.min_confidence);
+    // RESTRICCIÓN: solo comprar criptos estables (BASE_CRYPTOS)
+    const buys  = (result.signals || []).filter(s =>
+      s.action === 'BUY' && s.symbol && (s.confidence || 0) >= cfg.min_confidence
+      && BASE_CRYPTOS.includes(s.symbol)
+    );
+    // Log si la IA sugirió algo fuera de la lista
+    const blocked = (result.signals || []).filter(s => s.action === 'BUY' && s.symbol && !BASE_CRYPTOS.includes(s.symbol));
+    if (blocked.length) console.log(`[Crypto] ❌ Bloqueado ${blocked.map(b => b.symbol).join(', ')} — solo ${BASE_CRYPTOS.join(', ')}`);
 
     // Paso A: Ejecutar SELLS — SOLO si posición realmente tocó stop-loss
     for (const sig of sells) {
@@ -676,37 +683,18 @@ async function monitorPositions() {
       }
 
       // ── Trailing Stop dinámico ──
-      const isScalp = pos.order_id && pos.order_id.startsWith('SCALP');
+      if (pnlPct > 3) {
+        let newSL;
+        if (pnlPct > 25)      newSL = pos.entry_price * 1.20;
+        else if (pnlPct > 15)  newSL = pos.entry_price * 1.10;
+        else if (pnlPct > 10)  newSL = pos.entry_price * 1.06;
+        else if (pnlPct > 6)   newSL = pos.entry_price * 1.03;
+        else if (pnlPct > 3)   newSL = pos.entry_price * 1.01;
 
-      if (isScalp) {
-        // SCALPER: trailing agresivo — vender rápido cuando deja de subir
-        if (pnlPct > 1.5) {
-          let newSL;
-          if (pnlPct > 4)       newSL = pos.entry_price * 1.03;   // +4% → SL a +3%
-          else if (pnlPct > 2.5) newSL = pos.entry_price * 1.015;  // +2.5% → SL a +1.5%
-          else if (pnlPct > 1.5) newSL = pos.entry_price * 1.005;  // +1.5% → SL a breakeven
-
-          newSL = Math.round(newSL * 100000) / 100000;
-          if (newSL > pos.stop_loss) {
-            getDB().prepare('UPDATE crypto_positions SET stop_loss = ? WHERE id = ?').run(newSL, pos.id);
-            console.log(`[Scalper] 📊 Trailing ${pos.symbol}: +${pnlPct.toFixed(1)}% → SL a $${newSL}`);
-          }
-        }
-      } else {
-        // Regular: trailing más espaciado para trades de IA
-        if (pnlPct > 3) {
-          let newSL;
-          if (pnlPct > 25)      newSL = pos.entry_price * 1.20;
-          else if (pnlPct > 15)  newSL = pos.entry_price * 1.10;
-          else if (pnlPct > 10)  newSL = pos.entry_price * 1.06;
-          else if (pnlPct > 6)   newSL = pos.entry_price * 1.03;
-          else if (pnlPct > 3)   newSL = pos.entry_price * 1.01;
-
-          newSL = Math.round(newSL * 10000) / 10000;
-          if (newSL > pos.stop_loss) {
-            getDB().prepare('UPDATE crypto_positions SET stop_loss = ? WHERE id = ?').run(newSL, pos.id);
-            console.log(`[Crypto] 📊 Trailing ${pos.symbol}: +${pnlPct.toFixed(1)}% → SL a $${newSL}`);
-          }
+        newSL = Math.round(newSL * 10000) / 10000;
+        if (newSL > pos.stop_loss) {
+          getDB().prepare('UPDATE crypto_positions SET stop_loss = ? WHERE id = ?').run(newSL, pos.id);
+          console.log(`[Crypto] 📊 Trailing ${pos.symbol}: +${pnlPct.toFixed(1)}% → SL a $${newSL}`);
         }
       }
 
@@ -798,57 +786,6 @@ async function _executeSellPosition(cfg, pos, reason) {
   }
 }
 
-// ── Sniper de Nuevos Listings ─────────────────────────────────────────────────
-// Revisa cada 2 min si Binance listó una cripto nueva.
-// Las criptos nuevas suelen subir 50-500%+ en las primeras horas.
-// Compra apenas detecta → trailing stop agresivo para vender en el pico.
-
-async function sniperNewListings() {
-  const cfg = getConfig();
-  if (!cfg.enabled) return;
-
-  try {
-    const newListings = await checkNewListings();
-    if (!newListings.length) return;
-
-    for (const listing of newListings) {
-      console.log(`[Crypto] 🚀 SNIPER: Nuevo listing ${listing.symbol} @ $${listing.price} | Vol: $${Math.round(listing.volume / 1e6)}M`);
-
-      // Verificar que tenga volumen mínimo (evitar scams sin liquidez)
-      if (listing.volume < 500000) {
-        console.log(`[Crypto] 🚀 Skip ${listing.symbol} — volumen muy bajo ($${Math.round(listing.volume)})`);
-        continue;
-      }
-
-      // No comprar si ya tenemos posición
-      const positions = getOpenPositions();
-      if (positions.some(p => p.symbol === listing.symbol)) continue;
-
-      // Comprar con monto conservador para nuevo listing
-      const keyInfo = _getApiKeyInfo(cfg);
-      if (!keyInfo) continue;
-
-      const tradeAmount = Math.min(cfg.max_per_trade_usd || 10, 10); // Max $10 en listings nuevos
-      try {
-        const { order, price, quantity } = await _executeTrade(cfg, listing.symbol, 'buy', tradeAmount);
-        // SL más ajustado (nuevo listing = volatilidad extrema)
-        const sl = Math.round(price * 0.90 * 10000) / 10000;   // -10% SL (protección de caída)
-        const tp = Math.round(price * 1.50 * 10000) / 10000;   // +50% TP (criptos nuevas suben fuerte)
-        savePosition({
-          symbol: listing.symbol, side: 'BUY', quantity, entry_price: price,
-          stop_loss: sl, take_profit: tp, status: 'OPEN',
-          order_id: order?.id || '', reason: `🚀 NUEVO LISTING detectado — compra automática sniper`,
-        });
-        console.log(`[Crypto] 🚀 LIVE BUY ${listing.symbol}: ${quantity} @ $${price} | SL:$${sl} TP:$${tp}`);
-      } catch (e) {
-        console.error(`[Crypto] 🚀 Error sniper ${listing.symbol}:`, e.message);
-      }
-    }
-  } catch (e) {
-    console.error('[Crypto] Sniper error:', e.message);
-  }
-}
-
 // ── Sync: detectar criptos en Binance no trackeadas por el bot ────────────────
 // Si el usuario compró manualmente (ej: XRP), el bot no sabe. Esta función
 // escanea el balance de Binance y crea posiciones para monitorear/vender.
@@ -878,7 +815,7 @@ async function syncBinanceWallet() {
       if (price <= 0) continue;
 
       const value = info.total * price;
-      if (value < 2) continue; // Ignorar dust (<$2)
+      if (value < 6) continue; // Ignorar dust (<$6, Binance no deja vender <$5)
 
       // Crear posición de tracking con precio actual como entrada
       const sl = Math.round(price * (1 - (cfg.stop_loss_pct || 5) / 100) * 10000) / 10000;
@@ -900,118 +837,7 @@ async function syncBinanceWallet() {
   }
 }
 
-// ── SCALPER: detectar subidas en tiempo real y operar rápido ──────────────────
-// Replica lo que hace un trader manual: mirar qué sube AHORA, comprar, vender cuando baja.
-// Corre cada 60 seg. NO usa IA (lenta y cara). Usa datos puros: precio + RSI.
-
-const _scalperPrices = {}; // { symbol: [{price, ts},...] }
-const SCALP_SL_PCT = 3;   // Stop-loss 3% (cortar pérdida rápido)
-const SCALP_TP_PCT = 5;   // Take-profit 5% (tomar ganancia rápido)
-const SCALP_MIN_RISE = 1.5; // Mínimo +1.5% en 5 min para detectar subida
-const SCALP_HISTORY = 10;   // 10 puntos × 1 min = 10 min de historia
-
-async function runScalper() {
-  const cfg = getConfig();
-  if (!cfg.enabled) return;
-
-  try {
-    const gainers = await getTopGainers(10);
-    if (!gainers.length) return;
-
-    // 1. Actualizar historial de precios
-    const now = Date.now();
-    for (const g of gainers) {
-      if (!_scalperPrices[g.symbol]) _scalperPrices[g.symbol] = [];
-      _scalperPrices[g.symbol].push({ price: g.price, ts: now });
-      if (_scalperPrices[g.symbol].length > SCALP_HISTORY * 2) {
-        _scalperPrices[g.symbol] = _scalperPrices[g.symbol].slice(-SCALP_HISTORY);
-      }
-    }
-
-    // 2. Necesitamos al menos 5 puntos de historia (5 min)
-    const positions = getOpenPositions();
-    if (positions.length >= 3) return; // Max 3 posiciones
-
-    const todayTrades = _getTodayTradeCount();
-    if (todayTrades >= 6) return; // Max 6 trades en 8h
-
-    for (const g of gainers) {
-      const history = _scalperPrices[g.symbol];
-      if (!history || history.length < 5) continue;
-
-      // Ya tenemos posición? Skip
-      if (positions.some(p => p.symbol === g.symbol)) continue;
-
-      // Cooldown: no recomprar si vendimos hace poco
-      const recent = getDB().prepare(
-        "SELECT closed_at FROM crypto_positions WHERE symbol = ? AND status = 'CLOSED' ORDER BY id DESC LIMIT 1"
-      ).get(g.symbol);
-      if (recent && recent.closed_at) {
-        const closedAgo = now - new Date(recent.closed_at + 'Z').getTime();
-        if (closedAgo < 30 * 60 * 1000) continue;
-      }
-
-      // 3. Detectar subida: precio ahora vs hace 5 puntos (~5 min)
-      const oldPoint = history[Math.max(0, history.length - 5)];
-      const change5min = ((g.price - oldPoint.price) / oldPoint.price) * 100;
-
-      if (change5min < SCALP_MIN_RISE) continue; // No está subiendo lo suficiente
-
-      // 4. Verificar tendencia: los últimos 3 precios deben ser ascendentes
-      const last3 = history.slice(-3).map(h => h.price);
-      if (last3.length >= 3 && (last3[2] <= last3[1] || last3[1] <= last3[0])) continue; // No es tendencia alcista
-
-      // 5. RSI check rápido
-      let rsi = 50;
-      try {
-        const candles = await getOHLCV(g.symbol, '5m', 20);
-        if (candles && candles.length >= 16) {
-          rsi = _calculateRSI(candles.map(c => c[4]));
-        }
-      } catch {}
-      if (rsi > 70) {
-        console.log(`[Scalper] Skip ${g.symbol}: RSI=${rsi.toFixed(0)} > 70`);
-        continue;
-      }
-
-      // 6. USDT suficiente?
-      const keyInfo = _getApiKeyInfo(cfg);
-      if (!keyInfo) continue;
-      let availUSDT = 0;
-      try {
-        const bal = await getBalances(keyInfo.user_id, keyInfo.id);
-        availUSDT = bal?.USDT?.free || 0;
-      } catch {}
-      if (availUSDT < 10) continue;
-
-      const tradeAmount = Math.min(Math.floor(availUSDT * 0.40), cfg.max_per_trade_usd || 15);
-
-      // 7. COMPRAR
-      console.log(`[Scalper] 🎯 SEÑAL: ${g.symbol} subió +${change5min.toFixed(1)}% en 5min | RSI=${rsi.toFixed(0)} | Precio: $${g.price}`);
-      try {
-        const { order, price, quantity } = await _executeTrade(cfg, g.symbol, 'buy', tradeAmount);
-        const sl = Math.round(price * (1 - SCALP_SL_PCT / 100) * 100000) / 100000;
-        const tp = Math.round(price * (1 + SCALP_TP_PCT / 100) * 100000) / 100000;
-        savePosition({
-          symbol: g.symbol, side: 'BUY', quantity, entry_price: price,
-          stop_loss: sl, take_profit: tp, status: 'OPEN',
-          order_id: 'SCALP-' + (order?.id || Date.now()),
-          reason: `Scalper: +${change5min.toFixed(1)}% en 5min, RSI=${rsi.toFixed(0)}`,
-        });
-        console.log(`[Scalper] ✅ BUY ${g.symbol}: ${quantity} @ $${price} | SL:$${sl}(-${SCALP_SL_PCT}%) TP:$${tp}(+${SCALP_TP_PCT}%)`);
-        break; // Solo 1 compra por ciclo del scalper
-      } catch (e) {
-        console.error(`[Scalper] Error BUY ${g.symbol}: ${(e.message || '').substring(0, 60)}`);
-      }
-    }
-  } catch (e) {
-    console.warn(`[Scalper] Error: ${(e.message || '').substring(0, 60)}`);
-  }
-}
-
 // ── Init / Control ────────────────────────────────────────────────────────────
-
-let _sniperTimer = null;
 
 function init(broadcastFn) {
   _broadcastFn = broadcastFn;
@@ -1020,7 +846,6 @@ function init(broadcastFn) {
 
   if (_timer) clearInterval(_timer);
   if (_monitorTimer) clearInterval(_monitorTimer);
-  if (_sniperTimer) clearInterval(_sniperTimer);
 
   _timer = setInterval(async () => {
     try { await runAnalysis(); } catch (e) { console.error('[Crypto]', e.message); }
@@ -1030,19 +855,9 @@ function init(broadcastFn) {
     try { await monitorPositions(); } catch (e) { console.error('[Crypto] Monitor:', e.message); }
   }, 30 * 1000);
 
-  // Sniper: revisa nuevos listings cada 1 minuto
-  _sniperTimer = setInterval(async () => {
-    try { await sniperNewListings(); } catch (e) { console.error('[Crypto] Sniper:', e.message); }
-  }, 60 * 1000);
+  console.log(`[Crypto] Iniciado — AI cada ${cfg.analysis_interval_min || 3}min, monitor 30s | SOLO ${BASE_CRYPTOS.join(', ')}`);
 
-  console.log(`[Crypto] Iniciado — AI cada ${cfg.analysis_interval_min || 3}min, monitor 30s, sniper 1min`);
-
-  // Sincronizar wallet de Binance al iniciar (detectar criptos manuales no trackeadas)
-  setTimeout(async () => {
-    try { await syncBinanceWallet(); } catch (e) { console.error('[Crypto] Sync:', e.message); }
-  }, 5000);
-
-  // Primer análisis inmediato (15s para que cargue todo)
+  // Primer análisis (15s para que cargue todo)
   setTimeout(async () => {
     try { await runAnalysis(); } catch (e) { console.error('[Crypto] Inicial:', e.message); }
   }, 15000);
