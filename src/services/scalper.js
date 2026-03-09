@@ -14,7 +14,7 @@ const SCALP_TP_PCT = 5;      // Take-profit 5%
 const MIN_RISE_5MIN = 2.0;   // Mínimo +2% en 5 min para comprar
 const MIN_VOLUME_USD = 2000000; // Mínimo $2M volumen 24h
 const MAX_POSITIONS = 3;
-const MAX_TRADES_8H = 8;
+const MAX_TRADES_8H = 16;
 const COOLDOWN_MS = 20 * 60 * 1000; // 20 min entre trades del mismo par
 
 // ── Estado ────────────────────────────────────────────────────────────────────

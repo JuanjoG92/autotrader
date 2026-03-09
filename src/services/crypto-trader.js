@@ -640,7 +640,7 @@ JSON:
 
     // Paso C: Ejecutar BUYS con el balance actualizado
     const todayTrades = _getTodayTradeCount();
-    const MAX_DAILY_TRADES = 6;
+    const MAX_DAILY_TRADES = 12;
 
     for (const sig of buys) {
       // Límite diario de trades
@@ -668,8 +668,8 @@ JSON:
       ).get(sig.symbol);
       if (recent && recent.closed_at) {
         const closedAgo = Date.now() - new Date(recent.closed_at + 'Z').getTime();
-        if (closedAgo < 30 * 60 * 1000) {
-          console.log(`[Crypto] Skip ${sig.symbol} — vendido hace ${Math.round(closedAgo / 60000)} min (cooldown 30min)`);
+        if (closedAgo < 10 * 60 * 1000) {
+          console.log(`[Crypto] Skip ${sig.symbol} — vendido hace ${Math.round(closedAgo / 60000)} min (cooldown 10min)`);
           continue;
         }
       }
