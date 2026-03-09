@@ -241,9 +241,10 @@ async function makeDecisions() {
     const bal = await getBalances(keyInfo.user_id, keyInfo.id);
     availUSDT = bal?.USDT?.free || 0;
   } catch {}
-  if (availUSDT < 14) return; // Mínimo $14 libre para garantizar trade vendible
+  if (availUSDT < 14) return;
 
-  const tradeAmount = Math.max(12, Math.min(Math.floor(availUSDT * 0.40), 15));
+  // Scalper usa 20% del USDT libre (no compite con el trader principal)
+  const tradeAmount = Math.max(12, Math.floor(availUSDT * 0.20));
 
   // ── COMPRAR ──
   console.log(`[Scalper] 🎯 ${best.symbol} +${best.change.toFixed(1)}% en 5min | RSI=${rsi.toFixed(0)} | $${best.price} | Vol:$${Math.round(best.vol / 1e6)}M`);
@@ -297,11 +298,11 @@ async function monitorScalpPositions() {
     // Actualizar precio en DB
     getDB().prepare('UPDATE crypto_positions SET current_price = ? WHERE id = ?').run(price, pos.id);
 
-    // Venta rápida: cae -2% en primeros 3 min
+    // Venta INMEDIATA: si cae -3% → VENDER YA, sin importar la edad
     const posAge = Date.now() - new Date(pos.created_at + 'Z').getTime();
-    if (posAge < 3 * 60 * 1000 && pnlPct < -2) {
-      console.log(`[Scalper] ⚡ SALIDA RÁPIDA ${pos.symbol}: ${pnlPct.toFixed(1)}% en ${Math.round(posAge / 60000)}min`);
-      await _sellPosition(pos, `Salida rápida: ${pnlPct.toFixed(1)}%`);
+    if (pnlPct <= -3) {
+      console.log(`[Scalper] 🛑 CORTE -3% ${pos.symbol}: ${pnlPct.toFixed(1)}% en ${Math.round(posAge / 60000)}min`);
+      await _sellPosition(pos, `Corte -3%: ${pnlPct.toFixed(1)}%`);
       continue;
     }
 

@@ -461,18 +461,11 @@ async function runAnalysis() {
     console.warn('[Crypto] ⚠️ No se pudo leer balance de Binance');
   }
 
-  // Repartir USDT libre en max 2 posiciones (invertir todo el capital disponible)
-  // Mínimo $12 por trade para que Binance SIEMPRE permita vender después
+  // Repartir USDT libre en max 2 posiciones (SIEMPRE invertir todo el capital)
+  // Cada trade = ~50% del USDT disponible, mínimo $12 para ser vendible
   const currentOpenPositions = getOpenPositions().length;
-  const slotsAvailable = Math.max(0, 2 - currentOpenPositions);
-  const positionSize = slotsAvailable > 0
-    ? Math.max(12, Math.floor((availableUSDT - 2) / slotsAvailable))
-    : 12;
-  if (btcBearish && positionSize > 12) {
-    // BTC bearish: no invertir más del 60% por trade
-    const maxBearish = Math.floor(availableUSDT * 0.60);
-    // positionSize ya se calculó, aplicar cap
-  }
+  const slotsAvailable = Math.max(1, 2 - currentOpenPositions);
+  const positionSize = Math.max(12, Math.floor((availableUSDT - 2) / slotsAvailable));
 
   // ── PRE-ANÁLISIS TÉCNICO: calcular RSI real de los top coins ──
   const topCoins = (activePairs || BASE_CRYPTOS).filter(p => !BASE_CRYPTOS.includes(p)).slice(0, 6);
@@ -584,10 +577,11 @@ REGLAS DE TRADING:
 6. OFI > 2 = presión compradora real. CVD=BUYERS = acumulación activa. Ambos juntos = alta probabilidad.
 7. COMPRESSED = volatilidad comprimida + volumen subiendo = posible explosión inminente.
 8. Si BTC es BEARISH, solo comprar con OFI > 2 Y CVD=BUYERS (señal muy fuerte).
-9. SELL solo si posición bajó más de -${cfg.stop_loss_pct || 5}% desde entrada.
+9. SELL si posición bajó -3% o más — se vende AUTOMÁTICAMENTE por el monitor, no necesitas dar SELL.
 10. Sin USDT libre → HOLD. Posiciones en ganancia → HOLD.
-11. amount_usd = $${positionSize}. Confidence > 0.80 solo con múltiples señales alineadas.
+11. amount_usd = $${positionSize} (50% del capital libre, dinámico). Confidence > 0.80.
 12. Si NINGUNA cripto cumple los filtros → NO dar BUY. Esperar es válido.
+13. MÁXIMO 2 BUY signals. Cada una ~50% del USDT libre.
 
 JSON:
 {"signals":[{"symbol":"XXX/USDT","action":"BUY|SELL|HOLD","confidence":0.85,"amount_usd":${positionSize},"reason":"RSI=XX, Vol:Xx, ..."}],"analysis":"breve","market_sentiment":"BULLISH|BEARISH|NEUTRAL","watchlist":[]}`;
@@ -680,9 +674,10 @@ JSON:
         }
       }
 
-      const tradeAmount = Math.max(12, Math.min(sig.amount_usd || positionSize, availableUSDT - 2));
+      // Invertir positionSize (50% del USDT libre, dinámico)
+      const tradeAmount = Math.max(12, Math.min(positionSize, availableUSDT - 2));
       if (availableUSDT < 12) {
-        console.log(`[Crypto] Skip ${sig.symbol} — USDT libre: $${availableUSDT.toFixed(2)} (necesita >$12 para poder vender después)`);
+        console.log(`[Crypto] Skip ${sig.symbol} — USDT libre: $${availableUSDT.toFixed(2)} (mín $12)`);
         continue;
       }
 
@@ -788,10 +783,10 @@ async function monitorPositions() {
       const pnlPct = ((price - pos.entry_price) / pos.entry_price) * 100;
       const posAgeMin = posAge / 60000;
 
-      // VENTA RÁPIDA: si cae >3% en los primeros 5 min, la entrada fue mala → salir YA
-      if (posAgeMin < 5 && pnlPct < -3) {
-        console.log(`[Crypto] ⚡ VENTA RÁPIDA ${pos.symbol}: ${pnlPct.toFixed(1)}% en ${posAgeMin.toFixed(0)}min — mala entrada`);
-        await _executeSellPosition(cfg, pos, `Venta rápida: ${pnlPct.toFixed(1)}% en ${posAgeMin.toFixed(0)}min`);
+      // VENTA INMEDIATA: si cae 3% o más → VENDER YA, sin importar la edad
+      if (pnlPct <= -3) {
+        console.log(`[Crypto] 🛑 VENTA -3%: ${pos.symbol} ${pnlPct.toFixed(1)}% (${posAgeMin.toFixed(0)}min) — cortando pérdida`);
+        await _executeSellPosition(cfg, pos, `Corte -3%: ${pnlPct.toFixed(1)}% en ${posAgeMin.toFixed(0)}min`);
         continue;
       }
 
