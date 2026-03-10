@@ -2,21 +2,13 @@
 cd /var/www/autotrader
 node -e '
 require("dotenv").config();
-const {decrypt} = require("./src/services/encryption");
+const binance = require("./src/services/binance");
 const db = require("./src/models/db").getDB();
 const k = db.prepare("SELECT * FROM api_keys WHERE exchange = ?").get("binance");
 if (!k) { console.log("Sin API key binance"); process.exit(1); }
 try {
-  const apiKey = decrypt(k.api_key_enc);
-  const secret = decrypt(k.api_secret_enc);
-  console.log("Decrypt OK - key:" + apiKey.substring(0,8) + "... secret:" + secret.substring(0,8) + "...");
-  
-  const ccxt = require("ccxt");
-  const {SocksProxyAgent} = require("socks-proxy-agent");
-  const proxy = process.env.BINANCE_PROXY;
-  const agent = proxy ? new SocksProxyAgent(proxy.replace("socks5h://","socks5://")) : undefined;
-  
-  const ex = new ccxt.binance({apiKey, secret, httpAgent: agent, httpsAgent: agent});
+  const ex = binance.getExchangeForUser(k.user_id, k.id);
+  console.log("Exchange creado con proxy: " + (process.env.BINANCE_PROXY || "ninguno"));
   ex.fetchBalance().then(bal => {
     const coins = Object.entries(bal.total).filter(([s,v]) => v > 0 && s !== "USDT");
     console.log("USDT: $" + (bal.total.USDT || 0));
