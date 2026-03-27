@@ -22,6 +22,8 @@ let _loginInProgress = false;
 let _browser = null;
 let _page = null;
 let _browserLock = null;
+let _lastCrash = 0;
+const CRASH_COOLDOWN_MS = 30000; // 30s cooldown after crash before relaunching Chrome
 
 function _killZombieChrome() {
   try {
@@ -34,6 +36,11 @@ function _killZombieChrome() {
 
 async function _ensureBrowser() {
   if (_page && _browser?.isConnected()) return _page;
+  // Cooldown: no relanzar Chrome si crasheó hace menos de 30s
+  const sinceCrash = Date.now() - _lastCrash;
+  if (_lastCrash > 0 && sinceCrash < CRASH_COOLDOWN_MS) {
+    throw new Error(`Chrome en cooldown (${Math.round((CRASH_COOLDOWN_MS - sinceCrash)/1000)}s restantes)`);
+  }
   if (_browserLock) return _browserLock;
   _browserLock = _launchBrowser();
   try { return await _browserLock; }
@@ -131,12 +138,8 @@ async function _call(method, path, body, _retried) {
   try {
     page = await _ensureBrowser();
   } catch (e) {
-    if (!_retried) {
-      console.warn('[Cocos] Browser no disponible, relanzando...');
-      _browser = null; _page = null;
-      return _call(method, path, body, true);
-    }
-    throw e;
+    // No reintentar — respetar cooldown
+    throw new Error('Cocos browser no disponible: ' + e.message.substring(0, 60));
   }
 
   let result;
@@ -163,9 +166,12 @@ async function _call(method, path, body, _retried) {
     }, method, `${BASE_URL}/${path}`, body || null, token, ANON_KEY, _session.accountId);
   } catch (e) {
     if (!_retried) {
-      console.warn('[Cocos] Browser crash, reintentando...', e.message.substring(0, 60));
+      console.warn('[Cocos] Browser crash:', e.message.substring(0, 60));
+      _lastCrash = Date.now();
+      try { if (_browser) await _browser.close(); } catch {}
       _browser = null; _page = null;
-      return _call(method, path, body, true);
+      // No reintentar inmediatamente — dejar que el cooldown actúe
+      throw new Error('Browser crash (cooldown 30s): ' + e.message.substring(0, 60));
     }
     throw new Error('Browser crash: ' + e.message.substring(0, 100));
   }
