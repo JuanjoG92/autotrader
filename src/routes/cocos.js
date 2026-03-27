@@ -44,6 +44,47 @@ router.get('/debug-portfolio', async (req, res) => {
   }
 });
 
+// TEMP DEBUG - test sell readiness for known positions
+router.get('/debug-sell-test', async (req, res) => {
+  try {
+    if (!cocos.isReady()) return res.json({ error: 'Cocos not ready' });
+    const results = {};
+
+    // Get quotes for the 3 known positions (USD)
+    for (const ticker of ['PBR', 'VIST', 'NVDA']) {
+      try {
+        const q = await cocos.getQuote(ticker, 'C', 'USD');
+        results[ticker] = {
+          long_ticker: q?.long_ticker,
+          last_price: q?.last_price,
+          bid: q?.bid,
+          ask: q?.ask,
+          close: q?.close_price,
+          previous_close: q?.previous_close_price,
+        };
+        // Try selling power
+        if (q?.long_ticker) {
+          try {
+            const sp = await cocos.getSellingPower(q.long_ticker);
+            results[ticker].selling_power = sp;
+          } catch (e2) { results[ticker].sp_error = e2.message; }
+        }
+      } catch (e) { results[ticker] = { error: e.message }; }
+      await new Promise(r => setTimeout(r, 1000));
+    }
+
+    // Also try DB positions
+    const { getDB } = require('../models/db');
+    const dbPositions = getDB().prepare(
+      "SELECT id, ticker, quantity, price, currency, status FROM auto_investments WHERE action='BUY' AND status='EXECUTED'"
+    ).all();
+
+    res.json({ quotes: results, db_positions: dbPositions, cocos_ready: cocos.isReady() });
+  } catch (e) {
+    res.json({ error: e.message });
+  }
+});
+
 // GET /api/cocos/status
 router.get('/status', auth, (req, res) => {
   res.json(cocos.getSessionInfo());
@@ -117,14 +158,44 @@ router.get('/list', auth, requireReady, async (req, res) => {
 router.get('/portfolio', auth, ownerOnly, requireReady, async (req, res) => {
   try {
     const data = await cocos.getPortfolio();
-    console.log('[DEBUG Portfolio] Raw keys:', Object.keys(data || {}), '| isArray:', Array.isArray(data), '| length:', Array.isArray(data) ? data.length : (data?.positions?.length ?? 'N/A'));
-    if (Array.isArray(data) && data.length > 0) console.log('[DEBUG Portfolio] First item keys:', Object.keys(data[0]));
     res.json(data);
   } catch (e) {
-    console.log('[DEBUG Portfolio] ERROR:', e.status, e.message);
-    // Cocos devuelve 404 cuando el portfolio está vacío
+    // Cocos devuelve 404 — construir portfolio desde DB + quotes
     if (e.status === 404 || e.message?.includes('404') || e.message?.includes('Not Found')) {
-      return res.json({ positions: [], total_value: 0, empty: true });
+      try {
+        const { getDB } = require('../models/db');
+        const dbPos = getDB().prepare(
+          "SELECT * FROM auto_investments WHERE action='BUY' AND status='EXECUTED' ORDER BY created_at DESC"
+        ).all();
+        if (!dbPos.length) return res.json({ positions: [], total_value: 0, empty: true });
+
+        const positions = [];
+        let totalValue = 0;
+        for (const p of dbPos) {
+          let currentPrice = p.price;
+          let longTicker = '';
+          try {
+            const q = await cocos.getQuote(p.ticker, 'C', p.currency || 'ARS');
+            currentPrice = q?.last_price || q?.close_price || q?.previous_close_price || p.price;
+            longTicker = q?.long_ticker || '';
+          } catch {}
+          const value = currentPrice * p.quantity;
+          const pnl = (currentPrice - p.price) * p.quantity;
+          const pnlPct = p.price > 0 ? ((currentPrice - p.price) / p.price * 100) : 0;
+          totalValue += value;
+          positions.push({
+            ticker: p.ticker, long_ticker: longTicker, quantity: p.quantity,
+            buy_price: p.price, last_price: currentPrice, value,
+            pnl: parseFloat(pnl.toFixed(2)), pnl_pct: parseFloat(pnlPct.toFixed(2)),
+            currency: p.currency || 'ARS', source: 'db',
+            stop_loss_price: p.stop_loss_price, take_profit_price: p.take_profit_price,
+            created_at: p.created_at,
+          });
+        }
+        return res.json({ positions, total_value: parseFloat(totalValue.toFixed(2)), source: 'db_fallback' });
+      } catch (e2) {
+        return res.json({ positions: [], total_value: 0, empty: true, error: e2.message });
+      }
     }
     res.status(cocosErrorStatus(e)).json({ error: e.message });
   }
@@ -213,96 +284,122 @@ router.post('/orders/raw', auth, ownerOnly, requireReady, async (req, res) => {
 });
 
 // POST /api/cocos/sell-all — EMERGENCIA: vender todas las posiciones activas
+// NO depende de getPortfolio() (que da 404). Usa posiciones DB + getQuote directo.
 router.post('/sell-all', async (req, res) => {
-  // Sin auth — endpoint de emergencia para venta total
   try {
     if (!cocos.isReady()) return res.status(503).json({ error: 'Cocos no conectado' });
 
-    // 1. Obtener portfolio real de Cocos
-    let portfolio;
-    try {
-      portfolio = await cocos.getPortfolio();
-    } catch (e) {
-      return res.status(500).json({ error: 'No se pudo obtener portfolio: ' + e.message });
+    const { getDB } = require('../models/db');
+    const db = getDB();
+
+    // 1. Obtener posiciones EJECUTADAS de la DB (fuente confiable)
+    const dbPositions = db.prepare(
+      "SELECT * FROM auto_investments WHERE action='BUY' AND status='EXECUTED' ORDER BY created_at DESC"
+    ).all();
+
+    if (!dbPositions.length) {
+      return res.json({ ok: true, message: 'No hay posiciones activas en DB para vender', results: [] });
     }
 
-    // Normalizar: portfolio puede ser array o { positions: [...] }
-    let positions = [];
-    if (Array.isArray(portfolio)) {
-      positions = portfolio;
-    } else if (portfolio?.positions && Array.isArray(portfolio.positions)) {
-      positions = portfolio.positions;
-    } else if (portfolio && typeof portfolio === 'object') {
-      // Intentar extraer posiciones de cualquier estructura
-      const keys = Object.keys(portfolio);
-      for (const k of keys) {
-        if (Array.isArray(portfolio[k])) { positions = portfolio[k]; break; }
-      }
-    }
-
-    if (!positions.length) {
-      return res.json({ ok: true, message: 'No hay posiciones para vender', positions: [] });
-    }
-
+    console.log(`[SELL-ALL] 🔴 Iniciando venta de ${dbPositions.length} posiciones...`);
     const results = [];
-    for (const pos of positions) {
-      const ticker = pos.ticker || pos.symbol || pos.instrument || '';
-      const qty    = pos.quantity || pos.shares || pos.amount || pos.size || 0;
-      const lt     = pos.long_ticker || '';
-      const price  = pos.last_price || pos.price || pos.current_price || pos.close_price || 0;
 
-      if (!ticker || qty <= 0 || price <= 0) {
-        results.push({ ticker, status: 'SKIP', reason: 'Sin datos suficientes', qty, price });
+    for (const pos of dbPositions) {
+      const ticker = pos.ticker;
+      const qty    = pos.quantity;
+      const curr   = pos.currency || 'ARS';
+
+      if (!ticker || qty <= 0) {
+        results.push({ ticker, status: 'SKIP', reason: 'qty=0' });
         continue;
       }
 
       try {
-        // Obtener selling power para confirmar que podemos vender
-        let canSell = qty;
-        if (lt) {
-          try {
-            const sp = await cocos.getSellingPower(lt);
-            canSell = sp?.quantity || sp?.available || qty;
-          } catch {}
+        // Obtener quote actual con long_ticker correcto (incluye sufijo D para USD)
+        console.log(`[SELL-ALL] Obteniendo quote ${ticker} (${curr})...`);
+        const quote = await cocos.getQuote(ticker, 'C', curr);
+        const longTicker  = quote?.long_ticker || '';
+        const lastPrice   = quote?.last_price || quote?.close_price || quote?.previous_close_price || 0;
+        const bidPrice    = quote?.bid || lastPrice;
+
+        if (!longTicker) {
+          results.push({ ticker, status: 'ERROR', reason: 'Sin long_ticker del quote' });
+          console.error(`[SELL-ALL] ❌ ${ticker}: sin long_ticker`);
+          continue;
+        }
+        if (lastPrice <= 0 && bidPrice <= 0) {
+          results.push({ ticker, status: 'ERROR', reason: 'Sin precio (mercado cerrado?)' });
+          console.error(`[SELL-ALL] ❌ ${ticker}: sin precio`);
+          continue;
         }
 
-        const sellQty   = Math.min(qty, canSell);
-        // Precio de venta: bid o last_price con descuento 0.5% para asegurar ejecución
-        const bidPrice  = pos.bid || pos.bid_price || price;
-        const sellPrice = Math.round(bidPrice * 0.995 * 100) / 100;
-
-        let order;
-        if (lt) {
-          order = await cocos.placeOrderByLongTicker(lt, 'SELL', sellQty, sellPrice);
-        } else {
-          order = await cocos.placeSellOrder(ticker, sellQty, sellPrice, '24hs', 'ARS', 'C');
+        // Verificar selling power real
+        let sellableQty = qty;
+        try {
+          const sp = await cocos.getSellingPower(longTicker);
+          const spQty = sp?.quantity || sp?.available || sp?.max_quantity || 0;
+          if (spQty > 0) sellableQty = Math.min(qty, spQty);
+          console.log(`[SELL-ALL] ${ticker} selling power: ${spQty} (vendiendo ${sellableQty})`);
+        } catch (e) {
+          console.log(`[SELL-ALL] ${ticker} SP error (vendiendo ${qty} del DB): ${e.message}`);
         }
 
+        if (sellableQty <= 0) {
+          results.push({ ticker, long_ticker: longTicker, status: 'SKIP', reason: 'Selling power = 0' });
+          continue;
+        }
+
+        // Precio: bid con 0.5% descuento para ejecución rápida, o last_price
+        const sellPrice = bidPrice > 0
+          ? Math.round(bidPrice * 0.995 * 100) / 100
+          : Math.round(lastPrice * 0.99 * 100) / 100;
+
+        console.log(`[SELL-ALL] 📤 SELL ${ticker} x${sellableQty} @ ${curr} $${sellPrice} via ${longTicker}`);
+        const order   = await cocos.placeOrderByLongTicker(longTicker, 'SELL', sellableQty, sellPrice);
         const orderId = order?.Orden || order?.id || 'OK';
-        results.push({ ticker, long_ticker: lt, qty: sellQty, price: sellPrice, order_id: orderId, status: 'SENT' });
-        console.log(`[SELL-ALL] ✅ SELL ${ticker} x${sellQty} @ $${sellPrice} — #${orderId}`);
 
-        await new Promise(r => setTimeout(r, 1500));
+        // Registrar venta en DB
+        const pnl = (sellPrice - pos.price) * sellableQty;
+        db.prepare(`
+          INSERT INTO auto_investments (ticker, action, quantity, price, total_ars, order_id, status, reason, currency)
+          VALUES (?, 'SELL', ?, ?, ?, ?, 'EXECUTED', ?, ?)
+        `).run(ticker, sellableQty, sellPrice, sellPrice * sellableQty, String(orderId),
+               `SELL-ALL | Compra: $${pos.price} | PnL: ${curr} $${pnl.toFixed(2)}`, curr);
+
+        // Marcar posición original como CLOSED
+        db.prepare("UPDATE auto_investments SET status = 'CLOSED' WHERE id = ?").run(pos.id);
+
+        results.push({
+          ticker, long_ticker: longTicker, qty: sellableQty,
+          buy_price: pos.price, sell_price: sellPrice, pnl: pnl.toFixed(2),
+          order_id: orderId, status: 'SENT', currency: curr
+        });
+        console.log(`[SELL-ALL] ✅ ${ticker} x${sellableQty} @ ${curr} $${sellPrice} — #${orderId} | PnL: ${curr} $${pnl.toFixed(2)}`);
+
+        await new Promise(r => setTimeout(r, 2000)); // esperar entre órdenes
       } catch (e) {
         results.push({ ticker, status: 'ERROR', error: e.message });
         console.error(`[SELL-ALL] ❌ Error vendiendo ${ticker}:`, e.message);
       }
     }
 
-    // Marcar posiciones en auto_investments como CLOSED
-    try {
-      const { getDB } = require('../models/db');
-      getDB().prepare("UPDATE auto_investments SET status = 'CLOSED' WHERE action = 'BUY' AND status = 'EXECUTED'").run();
-    } catch {}
+    // Desactivar auto-invest
+    try { db.prepare("UPDATE auto_invest_config SET enabled = 0 WHERE id = 1").run(); } catch {}
 
-    // Desactivar auto-invest en DB
-    try {
-      const { getDB } = require('../models/db');
-      getDB().prepare("UPDATE auto_invest_config SET enabled = 0 WHERE id = 1").run();
-    } catch {}
+    const sent = results.filter(r => r.status === 'SENT');
+    const totalPnl = sent.reduce((s, r) => s + parseFloat(r.pnl || 0), 0);
+    console.log(`[SELL-ALL] 🏁 Completado: ${sent.length}/${results.length} vendidas | PnL total: $${totalPnl.toFixed(2)}`);
 
-    res.json({ ok: true, sold: results.filter(r => r.status === 'SENT').length, total: results.length, results });
+    res.json({
+      ok: true,
+      sold: sent.length,
+      total: results.length,
+      total_pnl: totalPnl.toFixed(2),
+      results,
+      timestamp: new Date().toISOString()
+    });
   } catch (e) {
+    console.error('[SELL-ALL] Error fatal:', e.message);
     res.status(500).json({ error: e.message });
   }
 });

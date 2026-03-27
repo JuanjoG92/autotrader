@@ -120,15 +120,48 @@ async function loadPortfolio() {
   const p = await api('GET', '/cocos/portfolio');
   const el = document.getElementById('portfolioList');
   if (!el) return;
-  if (!p || p.error || !p.positions?.length) {
+
+  // Normalizar: puede ser array directo o { positions: [...] }
+  let positions = [];
+  if (Array.isArray(p)) {
+    positions = p;
+  } else if (p?.positions && Array.isArray(p.positions)) {
+    positions = p.positions;
+  }
+
+  if (!positions.length || p?.error) {
     el.innerHTML = '<p style="color:var(--muted);font-size:.8rem">Cartera vacía</p>'; return;
   }
-  el.innerHTML = p.positions.map(pos => `
-    <div class="portfolio-item">
-      <div><div class="port-ticker">${pos.ticker || pos.instrument_code}</div>
-           <div class="port-qty">${pos.quantity} unidades</div></div>
-      <div class="port-value">$${Number(pos.last_price || 0).toLocaleString('es-AR',{minimumFractionDigits:2})}</div>
-    </div>`).join('');
+
+  el.innerHTML = positions.map(pos => {
+    const ticker = pos.ticker || pos.instrument_code || '';
+    const qty    = pos.quantity || pos.shares || 0;
+    const price  = pos.last_price || pos.price || 0;
+    const curr   = pos.currency || 'ARS';
+    const pnl    = pos.pnl || 0;
+    const pnlPct = pos.pnl_pct || 0;
+    const pnlCls = pnl >= 0 ? 'price-up' : 'price-down';
+    const pnlSign = pnl >= 0 ? '+' : '';
+    const value  = pos.value || (price * qty);
+    return `
+    <div class="portfolio-item" style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.05)">
+      <div>
+        <div class="port-ticker" style="font-weight:700">${ticker}</div>
+        <div class="port-qty" style="font-size:.75rem;color:var(--muted)">${qty} × ${curr} $${price.toLocaleString('es-AR',{minimumFractionDigits:2})}</div>
+      </div>
+      <div style="text-align:right">
+        <div style="font-weight:600">${curr} $${value.toLocaleString('es-AR',{minimumFractionDigits:2})}</div>
+        <div class="${pnlCls}" style="font-size:.75rem">${pnlSign}${pnl.toFixed(2)} (${pnlSign}${pnlPct.toFixed(1)}%)</div>
+      </div>
+    </div>`;
+  }).join('');
+
+  // Total
+  const totalValue = p.total_value || positions.reduce((s, pos) => s + (pos.value || 0), 0);
+  if (totalValue > 0) {
+    el.innerHTML += `<div style="margin-top:8px;padding-top:8px;border-top:1px solid rgba(255,255,255,0.1);display:flex;justify-content:space-between;font-weight:700">
+      <span>Total</span><span>$${totalValue.toLocaleString('es-AR',{minimumFractionDigits:2})}</span></div>`;
+  }
 }
 
 async function loadBuyingPower() {
