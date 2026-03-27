@@ -109,8 +109,19 @@ marketMonitor.init(broadcast);
 aiTrader.init(broadcast);
 newsFetcher.init();
 autoInvestor.init(broadcast);
-cryptoTrader.init(broadcast);
-scalper.init(broadcast);
+
+// Crypto/Scalper: solo iniciar si están habilitados en DB
+try {
+  const cryptoCfg = cryptoTrader.getConfig ? cryptoTrader.getConfig() : null;
+  if (cryptoCfg && cryptoCfg.enabled) {
+    cryptoTrader.init(broadcast);
+    scalper.init(broadcast);
+  } else {
+    console.log('[Server] Crypto/Scalper DESACTIVADOS — no se inician');
+  }
+} catch (e) {
+  console.log('[Server] Crypto/Scalper no iniciados:', e.message);
+}
 
 server.listen(PORT, () => {
   console.log(`AutoTrader running on port ${PORT}`);

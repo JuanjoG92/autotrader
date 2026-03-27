@@ -396,6 +396,13 @@ async function _sellPosition(pos, reason) {
 function init(broadcastFn) {
   _broadcastFn = broadcastFn;
 
+  // Verificar si crypto está habilitado
+  const cfg = getConfig();
+  if (!cfg || !cfg.enabled) {
+    console.log('[Scalper] Crypto desactivado — no se inicia WebSocket');
+    return;
+  }
+
   // Conectar WebSocket
   connectWebSocket();
 

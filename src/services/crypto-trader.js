@@ -1065,6 +1065,13 @@ let _syncTimer = null;
 function init(broadcastFn) {
   _broadcastFn = broadcastFn;
   const cfg = getConfig();
+
+  // Verificar si crypto está habilitado
+  if (!cfg || !cfg.enabled) {
+    console.log('[Crypto] Crypto desactivado — no se inician timers');
+    return;
+  }
+
   const intervalMs = (cfg.analysis_interval_min || 3) * 60 * 1000;
 
   if (_timer) clearInterval(_timer);
