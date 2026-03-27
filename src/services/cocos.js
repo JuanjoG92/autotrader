@@ -128,73 +128,110 @@ function _saveSession(access, refresh, expiresAt, accountId) {
   if (accountId) _session.accountId = accountId;
 }
 
-// ── HTTP (todo va por el browser) ───────────────────────────────────────────
+// ── HTTP (browser + fallback fetch nativo) ──────────────────────────────────
+
+// Fallback: fetch directo desde Node.js cuando Chrome no está disponible
+async function _directFetch(method, path, body) {
+  const token = _session.accessToken;
+  if (!token) throw new Error('Sin sesión Cocos activa');
+  const url = `${BASE_URL}/${path}`;
+  const opts = {
+    method,
+    headers: {
+      'Content-Type': 'application/json',
+      'apikey': ANON_KEY,
+      'Authorization': `Bearer ${token}`,
+      'x-account-id': String(_session.accountId),
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+    },
+  };
+  if (body) opts.body = JSON.stringify(body);
+  const r = await fetch(url, opts);
+  const text = await r.text();
+  let data;
+  try { data = JSON.parse(text); } catch { data = { raw: text.substring(0, 300) }; }
+  if (!r.ok) {
+    const msg = data?.message || data?.error || `HTTP ${r.status}`;
+    const err = new Error(`Cocos: ${msg}`);
+    err.status = r.status;
+    throw err;
+  }
+  return data;
+}
 
 async function _call(method, path, body, _retried) {
   const token = _session.accessToken;
   if (!token) throw new Error('Sin sesión Cocos activa');
 
+  // Intentar primero por Chrome
   let page;
+  let browserAvailable = true;
   try {
     page = await _ensureBrowser();
   } catch (e) {
-    // No reintentar — respetar cooldown
-    throw new Error('Cocos browser no disponible: ' + e.message.substring(0, 60));
+    browserAvailable = false;
   }
 
-  let result;
-  try {
-    result = await page.evaluate(async (m, url, b, t, ak, aid) => {
-      try {
-        const r = await fetch(url, {
-          method: m,
-          headers: {
-            'Content-Type': 'application/json',
-            'apikey': ak,
-            'Authorization': 'Bearer ' + t,
-            'x-account-id': String(aid),
-          },
-          body: b ? JSON.stringify(b) : undefined,
-        });
-        const text = await r.text();
-        let data;
-        try { data = JSON.parse(text); } catch { data = { raw: text.substring(0, 300) }; }
-        return { ok: r.ok, status: r.status, data };
-      } catch (err) {
-        return { ok: false, status: 0, data: { error: err.message } };
-      }
-    }, method, `${BASE_URL}/${path}`, body || null, token, ANON_KEY, _session.accountId);
-  } catch (e) {
-    if (!_retried) {
-      console.warn('[Cocos] Browser crash:', e.message.substring(0, 60));
+  if (browserAvailable && page) {
+    let result;
+    try {
+      result = await page.evaluate(async (m, url, b, t, ak, aid) => {
+        try {
+          const r = await fetch(url, {
+            method: m,
+            headers: {
+              'Content-Type': 'application/json',
+              'apikey': ak,
+              'Authorization': 'Bearer ' + t,
+              'x-account-id': String(aid),
+            },
+            body: b ? JSON.stringify(b) : undefined,
+          });
+          const text = await r.text();
+          let data;
+          try { data = JSON.parse(text); } catch { data = { raw: text.substring(0, 300) }; }
+          return { ok: r.ok, status: r.status, data };
+        } catch (err) {
+          return { ok: false, status: 0, data: { error: err.message } };
+        }
+      }, method, `${BASE_URL}/${path}`, body || null, token, ANON_KEY, _session.accountId);
+    } catch (e) {
+      console.warn('[Cocos] Browser crash:', e.message.substring(0, 60), '— fallback a fetch directo');
       _lastCrash = Date.now();
       try { if (_browser) await _browser.close(); } catch {}
       _browser = null; _page = null;
-      // No reintentar inmediatamente — dejar que el cooldown actúe
-      throw new Error('Browser crash (cooldown 30s): ' + e.message.substring(0, 60));
-    }
-    throw new Error('Browser crash: ' + e.message.substring(0, 100));
-  }
-
-  if (!result.ok) {
-    const msg = result.data?.message || result.data?.error || `HTTP ${result.status}`;
-
-    if (!_retried && (result.status === 401 || result.status === 403) &&
-        (msg.includes('ssurance') || msg.includes('upgrade') || msg.includes('jwt expired'))) {
-      console.log(`[Cocos] ${msg} — re-login automático...`);
+      // Fallback a fetch nativo
       try {
-        await _browserLogin();
-        return _call(method, path, body, true);
-      } catch (e) {
-        console.error('[Cocos] Re-login falló:', e.message);
+        return await _directFetch(method, path, body);
+      } catch (e2) {
+        throw new Error('Browser crash + fetch fallback falló: ' + e2.message.substring(0, 80));
       }
     }
 
-    const err = new Error(`Cocos: ${msg}`);
-    err.status = result.status;
-    throw err;
+    if (!result.ok) {
+      const msg = result.data?.message || result.data?.error || `HTTP ${result.status}`;
+
+      if (!_retried && (result.status === 401 || result.status === 403) &&
+          (msg.includes('ssurance') || msg.includes('upgrade') || msg.includes('jwt expired'))) {
+        console.log(`[Cocos] ${msg} — re-login automático...`);
+        try {
+          await _browserLogin();
+          return _call(method, path, body, true);
+        } catch (e) {
+          console.error('[Cocos] Re-login falló:', e.message);
+        }
+      }
+
+      const err = new Error(`Cocos: ${msg}`);
+      err.status = result.status;
+      throw err;
+    }
+    return result.data;
   }
-  return result.data;
+
+  // Chrome no disponible — usar fetch nativo directamente
+  console.log('[Cocos] Chrome no disponible, usando fetch directo para', method, path);
+  return _directFetch(method, path, body);
 }
 
 // ── TOTP ──────────────────────────────────────────────────────────────────────
