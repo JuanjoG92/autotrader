@@ -126,5 +126,13 @@ try {
 server.listen(PORT, () => {
   console.log(`AutoTrader running on port ${PORT}`);
   startAllActiveBots(broadcast);
-  priceStream(broadcast);
+  // priceStream usa Binance API — solo activar si crypto está habilitado
+  try {
+    const cryptoCfg = cryptoTrader.getConfig ? cryptoTrader.getConfig() : null;
+    if (cryptoCfg && cryptoCfg.enabled) {
+      priceStream(broadcast);
+    } else {
+      console.log('[Server] priceStream (Binance) desactivado');
+    }
+  } catch {}
 });
