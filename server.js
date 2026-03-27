@@ -105,10 +105,14 @@ const PORT = process.env.PORT || 3800;
 
 initDB();
 cocos.init().catch(e => console.error('[Cocos] Init error:', e.message));
-marketMonitor.init(broadcast);
+// marketMonitor DESACTIVADO — causa crash loop Chrome con 49 tickers cada 30s
+// marketMonitor.init(broadcast);
+console.log('[Server] Market Monitor DESACTIVADO — Chrome estabilidad');
 aiTrader.init(broadcast);
 newsFetcher.init();
-autoInvestor.init(broadcast);
+// AutoInvestor DESACTIVADO — usuario solicitó vender todo y no reinvertir
+// autoInvestor.init(broadcast);
+console.log('[Server] AutoInvestor DESACTIVADO — venta programada');
 
 // Crypto/Scalper: solo iniciar si están habilitados en DB
 try {

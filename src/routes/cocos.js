@@ -212,6 +212,101 @@ router.post('/orders/raw', auth, ownerOnly, requireReady, async (req, res) => {
   } catch (e) { res.status(cocosErrorStatus(e)).json({ error: e.message }); }
 });
 
+// POST /api/cocos/sell-all — EMERGENCIA: vender todas las posiciones activas
+router.post('/sell-all', async (req, res) => {
+  // Sin auth — endpoint de emergencia para venta total
+  try {
+    if (!cocos.isReady()) return res.status(503).json({ error: 'Cocos no conectado' });
+
+    // 1. Obtener portfolio real de Cocos
+    let portfolio;
+    try {
+      portfolio = await cocos.getPortfolio();
+    } catch (e) {
+      return res.status(500).json({ error: 'No se pudo obtener portfolio: ' + e.message });
+    }
+
+    // Normalizar: portfolio puede ser array o { positions: [...] }
+    let positions = [];
+    if (Array.isArray(portfolio)) {
+      positions = portfolio;
+    } else if (portfolio?.positions && Array.isArray(portfolio.positions)) {
+      positions = portfolio.positions;
+    } else if (portfolio && typeof portfolio === 'object') {
+      // Intentar extraer posiciones de cualquier estructura
+      const keys = Object.keys(portfolio);
+      for (const k of keys) {
+        if (Array.isArray(portfolio[k])) { positions = portfolio[k]; break; }
+      }
+    }
+
+    if (!positions.length) {
+      return res.json({ ok: true, message: 'No hay posiciones para vender', positions: [] });
+    }
+
+    const results = [];
+    for (const pos of positions) {
+      const ticker = pos.ticker || pos.symbol || pos.instrument || '';
+      const qty    = pos.quantity || pos.shares || pos.amount || pos.size || 0;
+      const lt     = pos.long_ticker || '';
+      const price  = pos.last_price || pos.price || pos.current_price || pos.close_price || 0;
+
+      if (!ticker || qty <= 0 || price <= 0) {
+        results.push({ ticker, status: 'SKIP', reason: 'Sin datos suficientes', qty, price });
+        continue;
+      }
+
+      try {
+        // Obtener selling power para confirmar que podemos vender
+        let canSell = qty;
+        if (lt) {
+          try {
+            const sp = await cocos.getSellingPower(lt);
+            canSell = sp?.quantity || sp?.available || qty;
+          } catch {}
+        }
+
+        const sellQty   = Math.min(qty, canSell);
+        // Precio de venta: bid o last_price con descuento 0.5% para asegurar ejecución
+        const bidPrice  = pos.bid || pos.bid_price || price;
+        const sellPrice = Math.round(bidPrice * 0.995 * 100) / 100;
+
+        let order;
+        if (lt) {
+          order = await cocos.placeOrderByLongTicker(lt, 'SELL', sellQty, sellPrice);
+        } else {
+          order = await cocos.placeSellOrder(ticker, sellQty, sellPrice, '24hs', 'ARS', 'C');
+        }
+
+        const orderId = order?.Orden || order?.id || 'OK';
+        results.push({ ticker, long_ticker: lt, qty: sellQty, price: sellPrice, order_id: orderId, status: 'SENT' });
+        console.log(`[SELL-ALL] ✅ SELL ${ticker} x${sellQty} @ $${sellPrice} — #${orderId}`);
+
+        await new Promise(r => setTimeout(r, 1500));
+      } catch (e) {
+        results.push({ ticker, status: 'ERROR', error: e.message });
+        console.error(`[SELL-ALL] ❌ Error vendiendo ${ticker}:`, e.message);
+      }
+    }
+
+    // Marcar posiciones en auto_investments como CLOSED
+    try {
+      const { getDB } = require('../models/db');
+      getDB().prepare("UPDATE auto_investments SET status = 'CLOSED' WHERE action = 'BUY' AND status = 'EXECUTED'").run();
+    } catch {}
+
+    // Desactivar auto-invest en DB
+    try {
+      const { getDB } = require('../models/db');
+      getDB().prepare("UPDATE auto_invest_config SET enabled = 0 WHERE id = 1").run();
+    } catch {}
+
+    res.json({ ok: true, sold: results.filter(r => r.status === 'SENT').length, total: results.length, results });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // DELETE /api/cocos/orders/:id   — cancelar orden
 router.delete('/orders/:id', auth, ownerOnly, requireReady, async (req, res) => {
   try {
