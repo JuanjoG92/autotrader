@@ -488,10 +488,13 @@ function getHealth() {
   };
 }
 
+const debugCall = (method, path, body) => _call(method, path, body);
+
 module.exports = {
   init, isReady, getSessionInfo, getHealth, forceRefresh, updateTokens, buildLongTicker,
   getMarketStatus, getDolarMEP, searchTicker, getQuote, getMarketList,
   getMyData, getPortfolio, getBuyingPower, getPerformance,
   getOrders, getOrderStatus, getSellingPower,
   placeBuyOrder, placeSellOrder, placeOrderByLongTicker, cancelOrder,
+  debugCall,
 };

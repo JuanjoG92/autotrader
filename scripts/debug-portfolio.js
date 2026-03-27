@@ -9,33 +9,39 @@ const cocos = require('../src/services/cocos');
   await new Promise(r => setTimeout(r, 3000));
 
   if (!cocos.isReady()) {
-    console.error('❌ Cocos NO está listo. Revisar credenciales.');
+    console.error('❌ Cocos NO está listo.');
     process.exit(1);
   }
-  console.log('✅ Cocos listo. Session:', cocos.getSessionInfo());
+  console.log('✅ Cocos listo.');
 
-  console.log('\n--- PORTFOLIO ---');
-  try {
-    const p = await cocos.getPortfolio();
-    console.log(JSON.stringify(p, null, 2));
-  } catch (e) {
-    console.error('Error portfolio:', e.message, 'status:', e.status);
-  }
+  const endpoints = [
+    'api/v1/wallet/portfolio',
+    'api/v2/wallet/portfolio',
+    'api/v1/portfolio',
+    'api/v2/portfolio',
+    'api/v1/wallet/positions',
+    'api/v1/wallet/assets',
+    'api/v1/wallet/holdings',
+    'api/v1/wallet/balance',
+    'api/v1/accounts/1391716/portfolio',
+    'api/v1/accounts/1391716/positions',
+    'api/v1/wallet',
+    'api/v1/wallet/overview',
+    'api/v1/wallet/totals',
+    'api/v2/wallet',
+    'api/v2/orders/buying-power',
+    'api/v1/markets/portfolio',
+    'api/v1/instruments/portfolio',
+  ];
 
-  console.log('\n--- BUYING POWER ---');
-  try {
-    const bp = await cocos.getBuyingPower();
-    console.log(JSON.stringify(bp, null, 2));
-  } catch (e) {
-    console.error('Error buying-power:', e.message, 'status:', e.status);
-  }
-
-  console.log('\n--- MY DATA ---');
-  try {
-    const me = await cocos.getMyData();
-    console.log(JSON.stringify(me, null, 2));
-  } catch (e) {
-    console.error('Error mydata:', e.message, 'status:', e.status);
+  for (const ep of endpoints) {
+    try {
+      const result = await cocos.debugCall('GET', ep);
+      const preview = JSON.stringify(result).substring(0, 300);
+      console.log(`✅ ${ep} → ${preview}`);
+    } catch (e) {
+      console.log(`❌ ${ep} → ${e.status || '?'} ${e.message.substring(0, 80)}`);
+    }
   }
 
   process.exit(0);
