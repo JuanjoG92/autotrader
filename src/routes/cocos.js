@@ -106,8 +106,11 @@ router.get('/list', auth, requireReady, async (req, res) => {
 router.get('/portfolio', auth, ownerOnly, requireReady, async (req, res) => {
   try {
     const data = await cocos.getPortfolio();
+    console.log('[DEBUG Portfolio] Raw keys:', Object.keys(data || {}), '| isArray:', Array.isArray(data), '| length:', Array.isArray(data) ? data.length : (data?.positions?.length ?? 'N/A'));
+    if (Array.isArray(data) && data.length > 0) console.log('[DEBUG Portfolio] First item keys:', Object.keys(data[0]));
     res.json(data);
   } catch (e) {
+    console.log('[DEBUG Portfolio] ERROR:', e.status, e.message);
     // Cocos devuelve 404 cuando el portfolio está vacío
     if (e.status === 404 || e.message?.includes('404') || e.message?.includes('Not Found')) {
       return res.json({ positions: [], total_value: 0, empty: true });
