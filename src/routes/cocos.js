@@ -33,6 +33,17 @@ function requireReady(req, res, next) {
 
 // ── Estado y admin ────────────────────────────────────────────────────────────
 
+// TEMP DEBUG - remove later
+router.get('/debug-portfolio', async (req, res) => {
+  try {
+    if (!cocos.isReady()) return res.json({ error: 'Cocos not ready' });
+    const data = await cocos.getPortfolio();
+    res.json({ raw_type: typeof data, is_array: Array.isArray(data), keys: Object.keys(data || {}), data });
+  } catch (e) {
+    res.json({ error: e.message, status: e.status });
+  }
+});
+
 // GET /api/cocos/status
 router.get('/status', auth, (req, res) => {
   res.json(cocos.getSessionInfo());
